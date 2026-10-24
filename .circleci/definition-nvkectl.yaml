@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nvkr.dev/definition/v5
+kind: Definition
+metadata:
+  name: nvke-nvkectl
+  description: Build the NVKE CLI from the pinned catalog.
+catalog:
+  base: ../inputs/catalogs/nvke/module-tags
+cosignTool: cosign
+sbomTool: syft
+outputs:
+- components:
+  - nvkectl
+  format: executable
+  name: nvkectl
+  platform: linux/amd64

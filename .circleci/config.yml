@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Customer-owned CircleCI config. NVKR does not generate this file.
-# Any branch validates and plans. main builds the three tutorial outputs.
-# Publication stays out of this config.
+# Any branch validates and plans. main builds the linux/amd64 nvkectl executable.
+# cwe, nvke-helm, and publication stay out of this config.
 version: 2.1
 
 parameters:
@@ -86,7 +86,7 @@ jobs:
             command -v make >/dev/null
             make build
             bin/nvkr definition validate \
-              --definition docs/examples/nvke-tutorial/definition.yaml
+              --definition .circleci/definition-nvkectl.yaml
 
       # Planned on every path. The plan describes the Run and does not execute it.
       - run:
@@ -97,7 +97,7 @@ jobs:
             export PATH="/usr/local/go/bin:${PATH}"
             export GOTOOLCHAIN=local
             bin/nvkr run plan \
-              --definition docs/examples/nvke-tutorial/definition.yaml \
+              --definition .circleci/definition-nvkectl.yaml \
               --environment docs/examples/nvke-tutorial/environment-local.yaml
 
       - when:
@@ -111,28 +111,15 @@ jobs:
                 command: |
                   set -euo pipefail
                   if [ "$(uname -m)" != "x86_64" ]; then
-                    echo "tutorial outputs are linux/amd64 and need an amd64 machine" >&2
+                    echo "nvkectl is linux/amd64 and needs an amd64 machine" >&2
                     exit 1
                   fi
                   if ! docker info >/dev/null 2>&1; then
                     echo "docker is not available" >&2
                     exit 1
                   fi
-                  if ! grep -qw overlay /proc/filesystems; then
-                    echo "overlay filesystem is unavailable" >&2
-                    exit 1
-                  fi
-                  kernel="$(uname -r)"
-                  major="${kernel%%.*}"
-                  rest="${kernel#*.}"
-                  minor="${rest%%.*}"
-                  minor="${minor%%[!0-9]*}"
-                  if [ "${major}" -lt 5 ] || { [ "${major}" -eq 5 ] && [ "${minor}" -lt 11 ]; }; then
-                    echo "kernel ${kernel} does not provide unprivileged overlayfs" >&2
-                    exit 1
-                  fi
             - run:
-                name: Build the tutorial outputs
+                name: Build nvkectl
                 no_output_timeout: 30m
                 command: |
                   set -euo pipefail
@@ -144,7 +131,7 @@ jobs:
                     exit 1
                   fi
                   bin/nvkr run local \
-                    --definition docs/examples/nvke-tutorial/definition.yaml \
+                    --definition .circleci/definition-nvkectl.yaml \
                     --environment docs/examples/nvke-tutorial/environment-local.yaml \
                     --attempt "circleci-${CIRCLE_BUILD_NUM}" \
                     --ui=plain --jobs 1
