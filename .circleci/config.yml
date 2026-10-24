@@ -47,15 +47,20 @@ jobs:
               exit 1
             fi
             tarball="go${go_version}.linux-${goarch}.tar.gz"
-            curl -fsSL -o "/tmp/${tarball}" "https://go.dev/dl/${tarball}"
-            curl -fsSL -o "/tmp/${tarball}.sha256" "https://go.dev/dl/${tarball}.sha256"
-            digest="$(awk 'NR==1 { print $1 }' "/tmp/${tarball}.sha256")"
+            # go.dev/dl/<file>.sha256 is an HTML page. The checksum is the plain digest on dl.google.com.
+            curl -fsSL -o "/tmp/${tarball}" "https://dl.google.com/go/${tarball}"
+            curl -fsSL -o "/tmp/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
+            digest="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
             case "${digest}" in
               *[!0-9a-f]*|"")
                 echo "Go checksum file is not a hex digest" >&2
                 exit 1
                 ;;
             esac
+            if [ "${#digest}" -ne 64 ]; then
+              echo "Go checksum file is not a SHA-256 digest" >&2
+              exit 1
+            fi
             echo "${digest}  /tmp/${tarball}" | sha256sum -c -
             sudo rm -rf /usr/local/go
             sudo tar -C /usr/local -xzf "/tmp/${tarball}"
