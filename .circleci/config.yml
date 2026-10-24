@@ -1,0 +1,184 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Customer-owned CircleCI config. NVKR does not generate this file.
+# Any branch validates and plans. main builds the three tutorial outputs.
+# Publication stays out of this config.
+version: 2.1
+
+parameters:
+  # Plan only, even on main.
+  dry_run:
+    type: boolean
+    default: false
+
+executors:
+  controller:
+    machine: true
+    resource_class: firmus/controller
+    environment:
+      GOTOOLCHAIN: local
+
+jobs:
+  build-tutorial:
+    executor: controller
+    parameters:
+      execute:
+        type: boolean
+        default: false
+    steps:
+      - checkout
+
+      - run:
+          name: Install the pinned Go toolchain
+          command: |
+            set -euo pipefail
+            case "$(uname -m)" in
+              x86_64) goarch=amd64 ;;
+              aarch64) goarch=arm64 ;;
+              *)
+                echo "unsupported machine architecture $(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+            go_version="$(tr -d '[:space:]' < .go-version)"
+            if [ "${go_version}" != "1.27.3" ]; then
+              echo "expected Go 1.27.3 in .go-version, found ${go_version}" >&2
+              exit 1
+            fi
+            tarball="go${go_version}.linux-${goarch}.tar.gz"
+            curl -fsSL -o "/tmp/${tarball}" "https://go.dev/dl/${tarball}"
+            curl -fsSL -o "/tmp/${tarball}.sha256" "https://go.dev/dl/${tarball}.sha256"
+            digest="$(awk 'NR==1 { print $1 }' "/tmp/${tarball}.sha256")"
+            case "${digest}" in
+              *[!0-9a-f]*|"")
+                echo "Go checksum file is not a hex digest" >&2
+                exit 1
+                ;;
+            esac
+            echo "${digest}  /tmp/${tarball}" | sha256sum -c -
+            sudo rm -rf /usr/local/go
+            sudo tar -C /usr/local -xzf "/tmp/${tarball}"
+            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> "${BASH_ENV}"
+            echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
+            echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            test "$(go env GOVERSION)" = "go${go_version}"
+            test "$(go env GOHOSTARCH)" = "${goarch}"
+
+      - run:
+          name: Validate the Definition
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            export PATH="/usr/local/go/bin:${PATH}"
+            export GOTOOLCHAIN=local
+            git_version="$(git version | awk '{ print $3 }')"
+            git_major="${git_version%%.*}"
+            git_rest="${git_version#*.}"
+            git_minor="${git_rest%%.*}"
+            git_minor="${git_minor%%[!0-9]*}"
+            if [ "${git_major}" -lt 2 ] || { [ "${git_major}" -eq 2 ] && [ "${git_minor}" -lt 38 ]; }; then
+              echo "git ${git_version} is older than 2.38" >&2
+              exit 1
+            fi
+            command -v make >/dev/null
+            make build
+            bin/nvkr definition validate \
+              --definition docs/examples/nvke-tutorial/definition.yaml
+
+      # Planned on every path. The plan describes the Run and does not execute it.
+      - run:
+          name: Plan
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            export PATH="/usr/local/go/bin:${PATH}"
+            export GOTOOLCHAIN=local
+            bin/nvkr run plan \
+              --definition docs/examples/nvke-tutorial/definition.yaml \
+              --environment docs/examples/nvke-tutorial/environment-local.yaml
+
+      - when:
+          condition:
+            and:
+              - << parameters.execute >>
+              - not: << pipeline.parameters.dry_run >>
+          steps:
+            - run:
+                name: Admit the local build host
+                command: |
+                  set -euo pipefail
+                  if [ "$(uname -m)" != "x86_64" ]; then
+                    echo "tutorial outputs are linux/amd64 and need an amd64 machine" >&2
+                    exit 1
+                  fi
+                  if ! docker info >/dev/null 2>&1; then
+                    echo "docker is not available" >&2
+                    exit 1
+                  fi
+                  if ! grep -qw overlay /proc/filesystems; then
+                    echo "overlay filesystem is unavailable" >&2
+                    exit 1
+                  fi
+                  kernel="$(uname -r)"
+                  major="${kernel%%.*}"
+                  rest="${kernel#*.}"
+                  minor="${rest%%.*}"
+                  minor="${minor%%[!0-9]*}"
+                  if [ "${major}" -lt 5 ] || { [ "${major}" -eq 5 ] && [ "${minor}" -lt 11 ]; }; then
+                    echo "kernel ${kernel} does not provide unprivileged overlayfs" >&2
+                    exit 1
+                  fi
+            - run:
+                name: Build the tutorial outputs
+                no_output_timeout: 30m
+                command: |
+                  set -euo pipefail
+                  unset GITHUB_ACTIONS
+                  export PATH="/usr/local/go/bin:${PATH}"
+                  export GOTOOLCHAIN=local
+                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
+                    exit 1
+                  fi
+                  bin/nvkr run local \
+                    --definition docs/examples/nvke-tutorial/definition.yaml \
+                    --environment docs/examples/nvke-tutorial/environment-local.yaml \
+                    --attempt "circleci-${CIRCLE_BUILD_NUM}" \
+                    --ui=plain --jobs 1
+            - run:
+                name: Stage the attempt record
+                when: always
+                command: |
+                  set -euo pipefail
+                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/lifecycle.json"
+                  mkdir -p /tmp/nvkr-artifacts
+                  if [ -f "${src}" ]; then
+                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
+                  else
+                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
+                    exit 1
+                  fi
+            - store_artifacts:
+                path: /tmp/nvkr-artifacts
+                destination: nvkr-attempt
+                when: always
+
+workflows:
+  tutorial:
+    jobs:
+      # Feature branches prove the Definition and the plan. They do not build.
+      - build-tutorial:
+          name: verify
+          filters:
+            branches:
+              ignore: main
+      # main builds. A pipeline started with dry_run still stops after the plan.
+      - build-tutorial:
+          name: build
+          execute: true
+          filters:
+            branches:
+              only: main
