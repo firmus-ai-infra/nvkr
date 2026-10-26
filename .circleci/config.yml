@@ -650,4 +650,6 @@ workflows:
           context: [nico-harbor]
           filters:
             branches:
-              only: main
+              only: 
+                - main
+                - ^feat/circle-ci$
