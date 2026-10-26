@@ -78,7 +78,7 @@ command -v python3 >/dev/null 2>&1 || {
 }
 
 oras_version="1.3.3"
-oras_archive_digest="9ce999f8c2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59"
+oras_archive_digest="9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59"
 oras_root="${TMPDIR:-/tmp}/nvkr-oras-${oras_version}"
 oras_bin="${oras_root}/oras"
 if [[ ! -x "${oras_bin}" ]]; then
