@@ -10,7 +10,7 @@ parameters:
   # Plan only, even on main.
   dry_run:
     type: boolean
-    default: false
+    default: true
 
 executors:
   controller:
