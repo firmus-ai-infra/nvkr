@@ -33,20 +33,16 @@ jobs:
           name: Install the pinned Go toolchain
           command: |
             set -euo pipefail
-            case "$(uname -m)" in
-              x86_64) goarch=amd64 ;;
-              aarch64) goarch=arm64 ;;
-              *)
-                echo "unsupported machine architecture $(uname -m)" >&2
-                exit 1
-                ;;
-            esac
+            if [ "$(uname -m)" != "x86_64" ]; then
+              echo "nvkectl is linux/amd64 and needs an amd64 machine" >&2
+              exit 1
+            fi
             go_version="$(tr -d '[:space:]' < .go-version)"
             if [ "${go_version}" != "1.27.3" ]; then
               echo "expected Go 1.27.3 in .go-version, found ${go_version}" >&2
               exit 1
             fi
-            tarball="go${go_version}.linux-${goarch}.tar.gz"
+            tarball="go${go_version}.linux-amd64.tar.gz"
             # go.dev/dl/<file>.sha256 is an HTML page. The checksum is the plain digest on dl.google.com.
             curl -fsSL -o "/tmp/${tarball}" "https://dl.google.com/go/${tarball}"
             curl -fsSL -o "/tmp/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
@@ -62,22 +58,23 @@ jobs:
               exit 1
             fi
             echo "${digest}  /tmp/${tarball}" | sha256sum -c -
-            sudo rm -rf /usr/local/go
-            sudo tar -C /usr/local -xzf "/tmp/${tarball}"
-            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> "${BASH_ENV}"
+            # The circleci user has no passwordless sudo. The tarball unpacks to ./go.
+            rm -rf "${HOME}/go"
+            tar -C "${HOME}" -xzf "/tmp/${tarball}"
+            echo 'export PATH="${HOME}/go/bin:${PATH}"' >> "${BASH_ENV}"
             echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
             echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
             # shellcheck disable=SC1090
             source "${BASH_ENV}"
             test "$(go env GOVERSION)" = "go${go_version}"
-            test "$(go env GOHOSTARCH)" = "${goarch}"
+            test "$(go env GOHOSTARCH)" = "amd64"
 
       - run:
           name: Validate the Definition
           command: |
             set -euo pipefail
             unset GITHUB_ACTIONS
-            export PATH="/usr/local/go/bin:${PATH}"
+            export PATH="${HOME}/go/bin:${PATH}"
             export GOTOOLCHAIN=local
             git_version="$(git version | awk '{ print $3 }')"
             git_major="${git_version%%.*}"
@@ -99,7 +96,7 @@ jobs:
           command: |
             set -euo pipefail
             unset GITHUB_ACTIONS
-            export PATH="/usr/local/go/bin:${PATH}"
+            export PATH="${HOME}/go/bin:${PATH}"
             export GOTOOLCHAIN=local
             bin/nvkr run plan \
               --definition .circleci/definition-nvkectl.yaml \
@@ -129,7 +126,7 @@ jobs:
                 command: |
                   set -euo pipefail
                   unset GITHUB_ACTIONS
-                  export PATH="/usr/local/go/bin:${PATH}"
+                  export PATH="${HOME}/go/bin:${PATH}"
                   export GOTOOLCHAIN=local
                   if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
                     echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
@@ -168,9 +165,11 @@ workflows:
             branches:
               ignore: main
       # main builds. A pipeline started with dry_run still stops after the plan.
+      # nico-harbor supplies HARBOR_USER and HARBOR_PASS. This job does not publish, so it does not map those values.
       - build-tutorial:
           name: build
           execute: true
+          context: [nico-harbor]
           filters:
             branches:
               only: main
