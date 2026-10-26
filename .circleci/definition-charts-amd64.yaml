@@ -31,6 +31,8 @@ outputs:
   platform: linux/amd64
 - catalog:
     base: ../inputs/catalogs/node-images/release
+    overlays:
+      - ../inputs/catalogs/node-images/variants/native-toolchains.yaml
   components:
   - ovn-kubernetes-chart
   format: helm-oci
