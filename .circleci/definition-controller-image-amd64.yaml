@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nvkr.dev/definition/v5
+kind: Definition
+metadata:
+  name: nvke-controller-image-amd64
+  description: Build the AMD64 NVKE controller image. Does not package charts.
+catalog:
+  base: ../inputs/catalogs/nvke/release
+outputs:
+- components:
+  - nvke-controller
+  format: oci
+  name: cwe
+  platform: linux/amd64

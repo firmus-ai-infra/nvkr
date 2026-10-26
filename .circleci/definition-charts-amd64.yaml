@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nvkr.dev/definition/v5
+kind: Definition
+metadata:
+  name: nvke-charts-amd64
+  description: Package the AMD64 controller, NKTP, and OVN charts. The controller chart binds the controller image from this Run.
+catalog:
+  base: ../inputs/catalogs/nvke/release
+outputs:
+- components:
+  - nvke-controller-chart
+  format: helm-oci
+  helm:
+    images:
+      controller: cwe
+  name: controller-chart
+  platform: linux/amd64
+- components:
+  - nvke-controller
+  format: oci
+  name: cwe
+  platform: linux/amd64
+- catalog:
+    base: ../inputs/catalogs/nvke/release-components
+  components:
+  - nktp-chart
+  format: helm-oci
+  name: nktp
+  platform: linux/amd64
+- catalog:
+    base: ../inputs/catalogs/node-images/release
+  components:
+  - ovn-kubernetes-chart
+  format: helm-oci
+  name: ovn-kubernetes-chart
+  platform: linux/amd64

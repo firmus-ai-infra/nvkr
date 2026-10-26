@@ -2,10 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Customer-owned CircleCI config. NVKR does not generate this file.
-# build_nvkectl, build_node_image, and publish_node_image each control only
+# build_nvkectl, build_node_image, publish_node_image, build_controller_image,
+# publish_controller_image, build_charts, and publish_charts each control only
 # their own work. node-os-image builds the Ubuntu 24.04.5 AMD64 QCOW2.
 # publish_node_image uploads that disk and does not start a job by itself.
-# cwe, nvke-helm, and NVKR registry publication stay out.
+# build_controller_image starts only the controller-image workflow.
+# publish_controller_image pushes that image and does not start a job.
+# build_charts starts only the chart workflow.
+# publish_charts pushes that Run's charts and bound controller image, and does not start a job.
+# nvkectl and node-os-image do not build the controller image or charts.
+# NVKR registry publication stays out. Harbor pushes use the publish parameters.
 version: 2.1
 
 parameters:
@@ -25,6 +31,23 @@ parameters:
   publish_node_image:
     type: boolean
     default: false
+  # Build the AMD64 controller image. Does not build charts or the node image.
+  build_controller_image:
+    type: boolean
+    default: true
+  # Push the image-only attempt. This step runs only inside controller-image.
+  publish_controller_image:
+    type: boolean
+    default: false
+  # Build the AMD64 controller, NKTP, and OVN charts. Does not start the image-only workflow.
+  build_charts:
+    type: boolean
+    default: true
+  # Push the chart attempt, including the controller image that attempt bound.
+  # This step runs only inside the chart workflow.
+  publish_charts:
+    type: boolean
+    default: false
 
 executors:
   controller:
@@ -35,6 +58,74 @@ executors:
       IMAGE_REGISTRY: harbor.cbr01.in.firmus.co/nvke
       CHART_REGISTRY: harbor.cbr01.in.firmus.co/nvke/charts
       HARBOR_HOST: harbor.cbr01.in.firmus.co
+
+commands:
+  install-pinned-go:
+    description: Install the Go version from .go-version for linux/amd64
+    steps:
+      - run:
+          name: Install the pinned Go toolchain
+          command: |
+            set -euo pipefail
+            if [ "$(uname -m)" != "x86_64" ]; then
+              echo "linux/amd64 outputs need an amd64 machine" >&2
+              exit 1
+            fi
+            go_version="$(tr -d '[:space:]' < .go-version)"
+            if [ "${go_version}" != "1.27.3" ]; then
+              echo "expected Go 1.27.3 in .go-version, found ${go_version}" >&2
+              exit 1
+            fi
+            tarball="go${go_version}.linux-amd64.tar.gz"
+            # go.dev/dl/<file>.sha256 is an HTML page. The checksum is the plain digest on dl.google.com.
+            curl -fsSL -o "/tmp/${tarball}" "https://dl.google.com/go/${tarball}"
+            curl -fsSL -o "/tmp/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
+            digest="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
+            case "${digest}" in
+              *[!0-9a-f]*|"")
+                echo "Go checksum file is not a hex digest" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${#digest}" -ne 64 ]; then
+              echo "Go checksum file is not a SHA-256 digest" >&2
+              exit 1
+            fi
+            echo "${digest}  /tmp/${tarball}" | sha256sum -c -
+            # The circleci user has no passwordless sudo. ${HOME}/go is the default
+            # GOPATH and can contain root-owned files, so the tarball is unpacked
+            # under ${HOME}/.local. The toolchain stays out of the module cache.
+            root="${HOME}/.local"
+            mkdir -p "${root}" "${HOME}/.cache/go-mod" "${HOME}/.cache/go-build" "${HOME}/.cache/gopath"
+            rm -rf "${root}/go"
+            tar -C "${root}" -xzf "/tmp/${tarball}"
+            echo 'export PATH="${HOME}/.local/go/bin:${PATH}"' >> "${BASH_ENV}"
+            echo 'export GOROOT="${HOME}/.local/go"' >> "${BASH_ENV}"
+            echo 'export GOPATH="${HOME}/.cache/gopath"' >> "${BASH_ENV}"
+            echo 'export GOMODCACHE="${HOME}/.cache/go-mod"' >> "${BASH_ENV}"
+            echo 'export GOCACHE="${HOME}/.cache/go-build"' >> "${BASH_ENV}"
+            echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
+            echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            test "$(go env GOROOT)" = "${HOME}/.local/go"
+            test "$(go env GOVERSION)" = "go${go_version}"
+            test "$(go env GOHOSTARCH)" = "amd64"
+  admit-amd64-docker:
+    description: Require Docker on the amd64 build host
+    steps:
+      - run:
+          name: Admit the local build host
+          command: |
+            set -euo pipefail
+            if [ "$(uname -m)" != "x86_64" ]; then
+              echo "linux/amd64 outputs need an amd64 machine" >&2
+              exit 1
+            fi
+            if ! docker info >/dev/null 2>&1; then
+              echo "docker is not available" >&2
+              exit 1
+            fi
 
 jobs:
   build-artefacts:
@@ -301,6 +392,186 @@ jobs:
                   scripts/push-node-image-s3.sh \
                     ".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/outputs/nvke-node-image-ubuntu24-amd64.qcow2"
 
+  build-controller-image:
+    executor: controller
+    parameters:
+      execute:
+        type: boolean
+        default: false
+    steps:
+      - checkout
+      - install-pinned-go
+      - run:
+          name: Validate the controller-image Definition
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            git_version="$(git version | awk '{ print $3 }')"
+            git_major="${git_version%%.*}"
+            git_rest="${git_version#*.}"
+            git_minor="${git_rest%%.*}"
+            git_minor="${git_minor%%[!0-9]*}"
+            if [ "${git_major}" -lt 2 ] || { [ "${git_major}" -eq 2 ] && [ "${git_minor}" -lt 38 ]; }; then
+              echo "git ${git_version} is older than 2.38" >&2
+              exit 1
+            fi
+            command -v make >/dev/null
+            make build
+            bin/nvkr definition validate \
+              --definition .circleci/definition-controller-image-amd64.yaml
+      - run:
+          name: Plan the controller image
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            bin/nvkr run plan \
+              --definition .circleci/definition-controller-image-amd64.yaml \
+              --environment docs/examples/nvke-deploy/environment-local.yaml
+      - when:
+          condition:
+            and:
+              - << parameters.execute >>
+              - not: << pipeline.parameters.dry_run >>
+          steps:
+            - admit-amd64-docker
+            - run:
+                name: Build the controller image
+                no_output_timeout: 120m
+                command: |
+                  set -euo pipefail
+                  unset GITHUB_ACTIONS
+                  # shellcheck disable=SC1090
+                  source "${BASH_ENV}"
+                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
+                    exit 1
+                  fi
+                  bin/nvkr run local \
+                    --definition .circleci/definition-controller-image-amd64.yaml \
+                    --environment docs/examples/nvke-deploy/environment-local.yaml \
+                    --attempt "circleci-${CIRCLE_BUILD_NUM}-image" \
+                    --ui=plain --jobs 1
+            - when:
+                condition: << pipeline.parameters.publish_controller_image >>
+                steps:
+                  - run:
+                      name: Publish the controller image
+                      command: |
+                        set -euo pipefail
+                        scripts/push-harbor-oci.sh image \
+                          "circleci-${CIRCLE_BUILD_NUM}-image"
+            - run:
+                name: Stage the attempt record
+                when: always
+                command: |
+                  set -euo pipefail
+                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-image/lifecycle.json"
+                  mkdir -p /tmp/nvkr-artifacts
+                  if [ -f "${src}" ]; then
+                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
+                  else
+                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
+                    exit 1
+                  fi
+            - store_artifacts:
+                path: /tmp/nvkr-artifacts
+                destination: nvkr-attempt
+                when: always
+
+  build-charts:
+    executor: controller
+    parameters:
+      execute:
+        type: boolean
+        default: false
+    steps:
+      - checkout
+      - install-pinned-go
+      - run:
+          name: Validate the chart Definition
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            git_version="$(git version | awk '{ print $3 }')"
+            git_major="${git_version%%.*}"
+            git_rest="${git_version#*.}"
+            git_minor="${git_rest%%.*}"
+            git_minor="${git_minor%%[!0-9]*}"
+            if [ "${git_major}" -lt 2 ] || { [ "${git_major}" -eq 2 ] && [ "${git_minor}" -lt 38 ]; }; then
+              echo "git ${git_version} is older than 2.38" >&2
+              exit 1
+            fi
+            command -v make >/dev/null
+            make build
+            bin/nvkr definition validate \
+              --definition .circleci/definition-charts-amd64.yaml
+      - run:
+          name: Plan the charts
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            bin/nvkr run plan \
+              --definition .circleci/definition-charts-amd64.yaml \
+              --environment docs/examples/nvke-deploy/environment-local.yaml
+      - when:
+          condition:
+            and:
+              - << parameters.execute >>
+              - not: << pipeline.parameters.dry_run >>
+          steps:
+            - admit-amd64-docker
+            - run:
+                name: Build the charts
+                no_output_timeout: 120m
+                command: |
+                  set -euo pipefail
+                  unset GITHUB_ACTIONS
+                  # shellcheck disable=SC1090
+                  source "${BASH_ENV}"
+                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
+                    exit 1
+                  fi
+                  bin/nvkr run local \
+                    --definition .circleci/definition-charts-amd64.yaml \
+                    --environment docs/examples/nvke-deploy/environment-local.yaml \
+                    --attempt "circleci-${CIRCLE_BUILD_NUM}-charts" \
+                    --ui=plain --jobs 1
+            - when:
+                condition: << pipeline.parameters.publish_charts >>
+                steps:
+                  - run:
+                      name: Publish the charts and bound controller image
+                      command: |
+                        set -euo pipefail
+                        scripts/push-harbor-oci.sh charts \
+                          "circleci-${CIRCLE_BUILD_NUM}-charts"
+            - run:
+                name: Stage the attempt record
+                when: always
+                command: |
+                  set -euo pipefail
+                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-charts/lifecycle.json"
+                  mkdir -p /tmp/nvkr-artifacts
+                  if [ -f "${src}" ]; then
+                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
+                  else
+                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
+                    exit 1
+                  fi
+            - store_artifacts:
+                path: /tmp/nvkr-artifacts
+                destination: nvkr-attempt
+                when: always
+
 workflows:
   tutorial:
     when: << pipeline.parameters.build_nvkectl >>
@@ -326,3 +597,41 @@ workflows:
       # nico-harbor supplies S3_ACCESS_KEY and S3_SECRET_KEY. The job does not print them.
       - build-node-os-image:
           context: [nico-harbor]
+  controller-image:
+    when: << pipeline.parameters.build_controller_image >>
+    jobs:
+      # Feature branches prove the Definition and the plan. They do not build.
+      - build-controller-image:
+          name: verify
+          filters:
+            branches:
+              ignore: main
+      # main builds. dry_run stops after the plan.
+      # publish_controller_image pushes only this job's image attempt.
+      # nico-harbor supplies HARBOR_USER and HARBOR_PASS. The job does not print them.
+      - build-controller-image:
+          name: build
+          execute: true
+          context: [nico-harbor]
+          filters:
+            branches:
+              only: main
+  charts:
+    when: << pipeline.parameters.build_charts >>
+    jobs:
+      # Feature branches prove the Definition and the plan. They do not build.
+      - build-charts:
+          name: verify
+          filters:
+            branches:
+              ignore: main
+      # main builds. dry_run stops after the plan.
+      # publish_charts pushes this job's charts and the controller image bound by that Run.
+      # nico-harbor supplies HARBOR_USER and HARBOR_PASS. The job does not print them.
+      - build-charts:
+          name: build
+          execute: true
+          context: [nico-harbor]
+          filters:
+            branches:
+              only: main
