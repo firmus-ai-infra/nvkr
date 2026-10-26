@@ -272,15 +272,17 @@ jobs:
                 command: |
                   set -euo pipefail
                   src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/lifecycle.json"
-                  mkdir -p /tmp/nvkr-artifacts
+                  # Stage inside this job's own working directory. The runner keeps /tmp
+                  # between jobs, so a shared /tmp path can hold files this user cannot write.
+                  mkdir -p nvkr-artifacts
                   if [ -f "${src}" ]; then
-                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
+                    cp "${src}" nvkr-artifacts/lifecycle.json
                   else
-                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
+                    printf 'attempt record missing: %s\n' "${src}" > nvkr-artifacts/lifecycle-missing.txt
                     exit 1
                   fi
             - store_artifacts:
-                path: /tmp/nvkr-artifacts
+                path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
 
@@ -470,20 +472,22 @@ jobs:
                 command: |
                   set -euo pipefail
                   src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-image/lifecycle.json"
-                  mkdir -p /tmp/nvkr-artifacts
+                  # Stage inside this job's own working directory. The runner keeps /tmp
+                  # between jobs, so a shared /tmp path can hold files this user cannot write.
+                  mkdir -p nvkr-artifacts
                   if [ -f "${src}" ]; then
-                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
+                    cp "${src}" nvkr-artifacts/lifecycle.json
                   else
-                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
+                    printf 'attempt record missing: %s\n' "${src}" > nvkr-artifacts/lifecycle-missing.txt
                     exit 1
                   fi
             - store_artifacts:
-                path: /tmp/nvkr-artifacts
+                path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
             - run:
                 name: Remove the NVKR attempt directory
-                when: on_fail
+                when: always
                 command: |
                   set -euo pipefail
                   if [ -d .nvkr ]; then
@@ -568,20 +572,22 @@ jobs:
                 command: |
                   set -euo pipefail
                   src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-charts/lifecycle.json"
-                  mkdir -p /tmp/nvkr-artifacts
+                  # Stage inside this job's own working directory. The runner keeps /tmp
+                  # between jobs, so a shared /tmp path can hold files this user cannot write.
+                  mkdir -p nvkr-artifacts
                   if [ -f "${src}" ]; then
-                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
+                    cp "${src}" nvkr-artifacts/lifecycle.json
                   else
-                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
+                    printf 'attempt record missing: %s\n' "${src}" > nvkr-artifacts/lifecycle-missing.txt
                     exit 1
                   fi
             - store_artifacts:
-                path: /tmp/nvkr-artifacts
+                path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
             - run:
                 name: Remove the NVKR attempt directory
-                when: on_fail
+                when: always
                 command: |
                   set -euo pipefail
                   if [ -d .nvkr ]; then
