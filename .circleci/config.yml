@@ -10,7 +10,7 @@ parameters:
   # Plan only, even on main.
   dry_run:
     type: boolean
-    default: true
+    default: false
 
 executors:
   controller:
@@ -25,7 +25,7 @@ jobs:
     parameters:
       execute:
         type: boolean
-        default: false
+        default: true
     steps:
       - checkout
 
