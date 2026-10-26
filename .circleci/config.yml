@@ -640,7 +640,9 @@ workflows:
           name: verify
           filters:
             branches:
-              ignore: main
+              ignore: 
+                - main
+                - /^feat\/circle-ci$/
       # main builds. dry_run stops after the plan.
       # publish_charts pushes this job's charts and the controller image bound by that Run.
       # nico-harbor supplies HARBOR_USER and HARBOR_PASS. The job does not print them.
@@ -652,4 +654,4 @@ workflows:
             branches:
               only: 
                 - main
-                - ^feat/circle-ci$
+                - /^feat\/circle-ci$/
