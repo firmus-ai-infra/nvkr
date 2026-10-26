@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nvkr.dev/catalog/v3
+kind: SourceBuildRegistry
+metadata:
+  name: nvke-ovn-chart-upstream
+  description: Standalone upstream OVN-Kubernetes 1.4.x Helm chart with NVKE values. Chart only; no image, node-image material or CNI package producers.
+sources:
+  ovn-kubernetes:
+    repo: https://github.com/ovn-kubernetes/ovn-kubernetes
+    constraint: 1.4.x
+    toolchainImagesByArch:
+      amd64: docker.io/library/golang@sha256:e114385c58e7280d2f56d6cf374219dda33fef8eb77f72e9f290ccae6160bd90
+      arm64: docker.io/library/golang@sha256:27da97ffaed4bbb1263c44a8e423a72a1547830ee14a70fdb0cef3f6268a1b8b
+components:
+  ovn-kubernetes-chart:
+    platforms: [linux/amd64, linux/arm64]
+    fromSource: true
+    source: ovn-kubernetes
+    outputType: tarball
+    buildCommand:
+      - bash
+      - -ec
+      - |
+        readonly chart=/src/helm/ovn-kubernetes
+        readonly out=/src/nvkr-output/ovn-kubernetes
+        test -f "${chart}/Chart.yaml"
+        grep -qx 'version: 1.4.0' "${chart}/Chart.yaml"
+        mkdir -p "${out}"
+        cp -a "${chart}/." "${out}/"
+        cat >"${out}/values-nke.yaml" <<'EOF'
+        tags:
+          ovs-node: false
+        global:
+          image:
+            repository: ghcr.io/ovn-kubernetes/ovn-kubernetes/ovn-kube-ubuntu
+            tag: release-1.4
+        EOF
+        find "${out}" -type d -exec chmod 0755 {} +
+        find "${out}" -type f -exec chmod 0644 {} +
+        find "${out}" -exec touch -d '2026-01-01 00:00:00Z' {} +
+        tar --sort=name --mtime='2026-01-01 00:00:00Z' \
+          --owner=0 --group=0 --numeric-owner -C /src/nvkr-output \
+          -cf /src/nvkr-output/ovn-kubernetes-chart.tar ovn-kubernetes
+    writeDir: nvkr-output
+    artifactPath: nvkr-output/ovn-kubernetes-chart.tar

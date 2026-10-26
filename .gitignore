@@ -31,3 +31,5 @@ coverage.html
 
 # personal agent overlay (see AGENTS.md "Local Overlay")
 AGENTS.local.md
+
+chat-logs/*

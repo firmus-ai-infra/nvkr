@@ -30,9 +30,7 @@ outputs:
   name: nktp
   platform: linux/amd64
 - catalog:
-    base: ../inputs/catalogs/node-images/release
-    overlays:
-      - ../inputs/catalogs/node-images/variants/native-toolchains.yaml
+    base: ../inputs/catalogs/ovn-chart-upstream
   components:
   - ovn-kubernetes-chart
   format: helm-oci
