@@ -38,7 +38,7 @@ parameters:
   # Push the image-only attempt. This step runs only inside controller-image.
   publish_controller_image:
     type: boolean
-    default: false
+    default: true
   # Build the AMD64 controller, NKTP, and OVN charts. Does not start the image-only workflow.
   build_charts:
     type: boolean
@@ -47,7 +47,7 @@ parameters:
   # This step runs only inside the chart workflow.
   publish_charts:
     type: boolean
-    default: false
+    default: true
 
 executors:
   controller:
@@ -481,6 +481,14 @@ jobs:
                 path: /tmp/nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
+            - run:
+                name: Remove the NVKR attempt directory
+                when: on_fail
+                command: |
+                  set -euo pipefail
+                  if [ -d .nvkr ]; then
+                    rm -rf .nvkr
+                  fi
 
   build-charts:
     executor: controller
@@ -571,6 +579,14 @@ jobs:
                 path: /tmp/nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
+            - run:
+                name: Remove the NVKR attempt directory
+                when: on_fail
+                command: |
+                  set -euo pipefail
+                  if [ -d .nvkr ]; then
+                    rm -rf .nvkr
+                  fi
 
 workflows:
   tutorial:
