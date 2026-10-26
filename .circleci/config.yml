@@ -2,13 +2,27 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Customer-owned CircleCI config. NVKR does not generate this file.
-# Any branch validates and plans. main builds the linux/amd64 nvkectl executable.
-# cwe, nvke-helm, and publication stay out of this config.
+# build_nvkectl, build_node_image, and publish_node_image each control only
+# their own work. node-os-image builds the Ubuntu 24.04.5 AMD64 QCOW2.
+# publish_node_image uploads that disk and does not start a job by itself.
+# cwe, nvke-helm, and NVKR registry publication stay out.
 version: 2.1
 
 parameters:
   # Plan only, even on main.
   dry_run:
+    type: boolean
+    default: false
+  # Build nvkectl. Does not affect the node-image job.
+  build_nvkectl:
+    type: boolean
+    default: false
+  # Build and record the Ubuntu 24.04.5 AMD64 node image. Does not affect nvkectl.
+  build_node_image:
+    type: boolean
+    default: true
+  # Upload the node-image disk. This step runs only inside node-os-image.
+  publish_node_image:
     type: boolean
     default: false
 
@@ -18,9 +32,12 @@ executors:
     resource_class: firmus/controller
     environment:
       GOTOOLCHAIN: local
+      IMAGE_REGISTRY: harbor.cbr01.in.firmus.co/nvke
+      CHART_REGISTRY: harbor.cbr01.in.firmus.co/nvke/charts
+      HARBOR_HOST: harbor.cbr01.in.firmus.co
 
 jobs:
-  build-tutorial:
+  build-artefacts:
     executor: controller
     parameters:
       execute:
@@ -176,21 +193,136 @@ jobs:
                 destination: nvkr-attempt
                 when: always
 
+  build-node-os-image:
+    executor: controller
+    environment:
+      S3_ENDPOINT: https://s3-console.cbr01.in.firmus.co/
+      S3_BUCKET: nvke
+      S3_PREFIX: nvke-node-image-ubuntu24-amd64
+    steps:
+      - checkout
+      - run:
+          name: Admit the native KVM host
+          command: |
+            set -euo pipefail
+            if [ "$(uname -m)" != "x86_64" ]; then
+              echo "the Ubuntu 24 node image is linux/amd64 and needs an amd64 machine" >&2
+              exit 1
+            fi
+            if ! docker info >/dev/null 2>&1; then
+              echo "docker is not available" >&2
+              exit 1
+            fi
+            if [ ! -c /dev/kvm ] || [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+              echo "runner identity needs read/write access to /dev/kvm" >&2
+              exit 1
+            fi
+            exec 3<>/dev/kvm
+            exec 3>&-
+            command -v jq >/dev/null
+            command -v mc >/dev/null
+            avail_kib="$(df -Pk . | awk 'NR==2 { print $4 }')"
+            case "${avail_kib}" in
+              ''|*[!0-9]*)
+                echo "could not read free workspace space" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${avail_kib}" -lt 67108864 ]; then
+              echo "need at least 64 GiB free workspace, found ${avail_kib} KiB" >&2
+              exit 1
+            fi
+      - run:
+          name: Build the Ubuntu 24 node image
+          no_output_timeout: 120m
+          command: |
+            set -euo pipefail
+            unset GITHUB_ACTIONS
+            if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+              echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
+              exit 1
+            fi
+            NVKE_OS_UBUNTU_VERSION=24.04 NVKE_OS_ARCH=amd64 \
+              scripts/nvke-os-local.sh "circleci-${CIRCLE_BUILD_NUM}" 4
+      - run:
+          name: Record the disk digest
+          command: |
+            set -euo pipefail
+            if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+              echo "CIRCLE_BUILD_NUM is required for the build record" >&2
+              exit 1
+            fi
+            attempt="circleci-${CIRCLE_BUILD_NUM}"
+            outdir=".nvkr/runs/${attempt}/outputs"
+            qcow="${outdir}/nvke-node-image-ubuntu24-amd64.qcow2"
+            test -f "${qcow}"
+            (
+              cd "${outdir}"
+              sha256sum "$(basename "${qcow}")" > "$(basename "${qcow}").sha256"
+              sha256sum -c "$(basename "${qcow}").sha256"
+            )
+            digest="$(awk '{ print $1 }' "${qcow}.sha256")"
+            case "${digest}" in
+              *[!0-9a-f]*|"")
+                echo "disk checksum is not a hex digest" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${#digest}" -ne 64 ]; then
+              echo "disk checksum is not a SHA-256 digest" >&2
+              exit 1
+            fi
+            size="$(stat -c %s "${qcow}")"
+            printf 'attempt: %s\nbuild_number: %s\nsize: %s\ndigest: sha256:%s\n' \
+              "${attempt}" "${CIRCLE_BUILD_NUM}" "${size}" "${digest}" \
+              > "${outdir}/build-info.txt"
+            test -f ".nvkr/runs/${attempt}/lifecycle.json"
+      - run:
+          name: Stage the digest and attempt record
+          command: |
+            set -euo pipefail
+            attempt="circleci-${CIRCLE_BUILD_NUM}"
+            outdir=".nvkr/runs/${attempt}/outputs"
+            dest="/tmp/nvkr-node-image-meta"
+            mkdir -p "${dest}"
+            cp "${outdir}/nvke-node-image-ubuntu24-amd64.qcow2.sha256" "${dest}/"
+            cp "${outdir}/build-info.txt" "${dest}/"
+            cp ".nvkr/runs/${attempt}/lifecycle.json" "${dest}/"
+      - store_artifacts:
+          path: /tmp/nvkr-node-image-meta
+          destination: node-image
+      - when:
+          condition: << pipeline.parameters.publish_node_image >>
+          steps:
+            - run:
+                name: Publish the node image
+                command: |
+                  set -euo pipefail
+                  scripts/push-node-image-s3.sh \
+                    ".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/outputs/nvke-node-image-ubuntu24-amd64.qcow2"
+
 workflows:
   tutorial:
+    when: << pipeline.parameters.build_nvkectl >>
     jobs:
       # Feature branches prove the Definition and the plan. They do not build.
-      - build-tutorial:
+      - build-artefacts:
           name: verify
           filters:
             branches:
               ignore: main
       # main builds. A pipeline started with dry_run still stops after the plan.
       # nico-harbor supplies HARBOR_USER and HARBOR_PASS. This job does not publish, so it does not map those values.
-      - build-tutorial:
+      - build-artefacts:
           name: build
           execute: true
           context: [nico-harbor]
           filters:
             branches:
               only: main
+  node-os-image:
+    when: << pipeline.parameters.build_node_image >>
+    jobs:
+      # nico-harbor supplies S3_ACCESS_KEY and S3_SECRET_KEY. The job does not print them.
+      - build-node-os-image:
+          context: [nico-harbor]

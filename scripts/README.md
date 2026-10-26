@@ -105,6 +105,8 @@ CONTAINER_RUNTIME=docker NVKE_OS_ARCH=amd64 scripts/nvke-os-local.sh local-amd64
 The default guest is Ubuntu 26.04. Set `NVKE_OS_UBUNTU_VERSION=24.04` to select the
 [Ubuntu 24.04.5 inputs](../inputs/definitions/diagnostics/ubuntu24/README.md), including their
 separate compatible agent compiler. The architecture and native KVM requirements stay the same.
+`scripts/push-node-image-s3.sh` uploads the Ubuntu 24.04.5 AMD64 disk from that
+wrapper, and the byte copy does not grant release authority.
 
 Use a different immutable attempt name for each run. The historical Podman
 [full build and boot smoke](https://github.com/dsx-ai-factory/nvkr/blob/a187d6b702cbc1a70452760c606c2c4de1ed6618/docs/evidence/2026-09-23-nke-arm64-local-os-build.md)
