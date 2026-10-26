@@ -58,14 +58,23 @@ jobs:
               exit 1
             fi
             echo "${digest}  /tmp/${tarball}" | sha256sum -c -
-            # The circleci user has no passwordless sudo. The tarball unpacks to ./go.
-            rm -rf "${HOME}/go"
-            tar -C "${HOME}" -xzf "/tmp/${tarball}"
-            echo 'export PATH="${HOME}/go/bin:${PATH}"' >> "${BASH_ENV}"
+            # The circleci user has no passwordless sudo. ${HOME}/go is the default
+            # GOPATH and can contain root-owned files, so the tarball is unpacked
+            # under ${HOME}/.local. The toolchain stays out of the module cache.
+            root="${HOME}/.local"
+            mkdir -p "${root}" "${HOME}/.cache/go-mod" "${HOME}/.cache/go-build" "${HOME}/.cache/gopath"
+            rm -rf "${root}/go"
+            tar -C "${root}" -xzf "/tmp/${tarball}"
+            echo 'export PATH="${HOME}/.local/go/bin:${PATH}"' >> "${BASH_ENV}"
+            echo 'export GOROOT="${HOME}/.local/go"' >> "${BASH_ENV}"
+            echo 'export GOPATH="${HOME}/.cache/gopath"' >> "${BASH_ENV}"
+            echo 'export GOMODCACHE="${HOME}/.cache/go-mod"' >> "${BASH_ENV}"
+            echo 'export GOCACHE="${HOME}/.cache/go-build"' >> "${BASH_ENV}"
             echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
             echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
             # shellcheck disable=SC1090
             source "${BASH_ENV}"
+            test "$(go env GOROOT)" = "${HOME}/.local/go"
             test "$(go env GOVERSION)" = "go${go_version}"
             test "$(go env GOHOSTARCH)" = "amd64"
 
@@ -74,7 +83,11 @@ jobs:
           command: |
             set -euo pipefail
             unset GITHUB_ACTIONS
-            export PATH="${HOME}/go/bin:${PATH}"
+            export PATH="${HOME}/.local/go/bin:${PATH}"
+            export GOROOT="${HOME}/.local/go"
+            export GOPATH="${HOME}/.cache/gopath"
+            export GOMODCACHE="${HOME}/.cache/go-mod"
+            export GOCACHE="${HOME}/.cache/go-build"
             export GOTOOLCHAIN=local
             git_version="$(git version | awk '{ print $3 }')"
             git_major="${git_version%%.*}"
@@ -96,7 +109,11 @@ jobs:
           command: |
             set -euo pipefail
             unset GITHUB_ACTIONS
-            export PATH="${HOME}/go/bin:${PATH}"
+            export PATH="${HOME}/.local/go/bin:${PATH}"
+            export GOROOT="${HOME}/.local/go"
+            export GOPATH="${HOME}/.cache/gopath"
+            export GOMODCACHE="${HOME}/.cache/go-mod"
+            export GOCACHE="${HOME}/.cache/go-build"
             export GOTOOLCHAIN=local
             bin/nvkr run plan \
               --definition .circleci/definition-nvkectl.yaml \
@@ -126,7 +143,11 @@ jobs:
                 command: |
                   set -euo pipefail
                   unset GITHUB_ACTIONS
-                  export PATH="${HOME}/go/bin:${PATH}"
+                  export PATH="${HOME}/.local/go/bin:${PATH}"
+                  export GOROOT="${HOME}/.local/go"
+                  export GOPATH="${HOME}/.cache/gopath"
+                  export GOMODCACHE="${HOME}/.cache/go-mod"
+                  export GOCACHE="${HOME}/.cache/go-build"
                   export GOTOOLCHAIN=local
                   if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
                     echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
