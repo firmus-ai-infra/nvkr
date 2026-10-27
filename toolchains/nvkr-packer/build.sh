@@ -232,6 +232,25 @@ esac
 
 base_image="$(jq -r '.baseImage' "${lock}")"
 download_image="$(jq -r '.downloadImage' "${lock}")"
+# Optional caller overrides keep the locked digests and change only the registry
+# name. Unset variables leave the lock references in place.
+if [[ -n "${NVKR_PACKER_BASE_IMAGE:-}" || -n "${NVKR_PACKER_DOWNLOAD_IMAGE:-}" ]]; then
+  if [[ -z "${NVKR_PACKER_BASE_IMAGE:-}" || -z "${NVKR_PACKER_DOWNLOAD_IMAGE:-}" ]]; then
+    echo "NVKR_PACKER_BASE_IMAGE and NVKR_PACKER_DOWNLOAD_IMAGE must be set together" >&2
+    exit 1
+  fi
+  digest_ref='^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$'
+  if [[ ! "${NVKR_PACKER_BASE_IMAGE}" =~ ${digest_ref} || "${NVKR_PACKER_BASE_IMAGE}" != *"@${base_image#*@}" ]]; then
+    echo "NVKR_PACKER_BASE_IMAGE must be a digest pin of the locked Ubuntu image" >&2
+    exit 1
+  fi
+  if [[ ! "${NVKR_PACKER_DOWNLOAD_IMAGE}" =~ ${digest_ref} || "${NVKR_PACKER_DOWNLOAD_IMAGE}" != *"@${download_image#*@}" ]]; then
+    echo "NVKR_PACKER_DOWNLOAD_IMAGE must be a digest pin of the locked curl image" >&2
+    exit 1
+  fi
+  base_image="${NVKR_PACKER_BASE_IMAGE}"
+  download_image="${NVKR_PACKER_DOWNLOAD_IMAGE}"
+fi
 snapshot="$(jq -r '.ubuntuSnapshot' "${lock}")"
 packer_version="$(jq -r '.packer.version' "${lock}")"
 packer_digest="$(jq -r --arg arch "${arch}" '.packer.archives[$arch]' "${lock}")"

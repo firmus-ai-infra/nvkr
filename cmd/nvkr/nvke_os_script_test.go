@@ -417,6 +417,15 @@ func TestOSBootstrapRejectsUnsupportedRoutesBeforeOutput(t *testing.T) {
 // The real CLI compiles both maintained and frozen inputs. Only the native
 // toolchain build and final execution are substituted; no Docker or KVM runs.
 func TestOSBootstrapFreezesSelectedUbuntuRecipe(t *testing.T) {
+	freezeOSBootstrapRecipe(t, "scripts/nvke-os-local.sh", "docker.io/library/golang@sha256:")
+}
+
+func TestOSBootstrapHarborFreezesSelectedUbuntuRecipe(t *testing.T) {
+	freezeOSBootstrapRecipe(t, "scripts/nvke-os-local-harbor.sh", "harbor.cbr01.in.firmus.co/dockerhub/library/golang@sha256:")
+}
+
+func freezeOSBootstrapRecipe(t *testing.T, script, agentPrefix string) {
+	t.Helper()
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("OS wrapper requires jq")
 	}
@@ -437,12 +446,19 @@ func TestOSBootstrapFreezesSelectedUbuntuRecipe(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				for _, file := range []string{"scripts/nvke-os-local.sh", "scripts/nvke-os-plan.jq"} {
+				for _, file := range []string{script, "scripts/nvke-os-plan.jq"} {
 					raw, err := os.ReadFile(filepath.Join(repository, file))
 					if err != nil {
 						t.Fatal(err)
 					}
 					writeOSBootstrapFixture(t, root, file, string(raw))
+				}
+				if strings.Contains(script, "harbor") {
+					raw, err := os.ReadFile(filepath.Join(repository, "toolchains/nvkr-packer/toolchain.lock.json"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					writeOSBootstrapFixture(t, root, "toolchains/nvkr-packer/toolchain.lock.json", string(raw))
 				}
 				image := "sha256:" + strings.Repeat("e", 64)
 				writeOSBootstrapFixture(t, root, "toolchains/nvkr-packer/build.sh", "#!/bin/sh\nprintf '%s\\n' '"+image+"'\n")
@@ -462,9 +478,9 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 				if arch == "amd64" {
 					machine = "x86_64"
 				}
-				ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 				defer cancel()
-				cmd := exec.CommandContext(ctx, "bash", filepath.Join(root, "scripts/nvke-os-local.sh"), "test-attempt")
+				cmd := exec.CommandContext(ctx, "bash", filepath.Join(root, script), "test-attempt")
 				record := filepath.Join(root, "run-record")
 				cmd.Env = append(os.Environ(), "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"),
 					"CONTAINER_RUNTIME=docker", "NVKE_OS_ARCH="+arch, "NVKE_OS_UBUNTU_VERSION="+ubuntu, "NVKE_LOCAL_CLONE=",
@@ -505,7 +521,7 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 				}
 				agent := build.CatalogSnapshot.Components["nvke-agent"].ToolchainImages[arch]
 				if ubuntu == "24.04" {
-					if !strings.Contains(build.Name, "ubuntu24") || agent == image || !strings.HasPrefix(agent, "docker.io/library/golang@sha256:") {
+					if !strings.Contains(build.Name, "ubuntu24") || agent == image || !strings.HasPrefix(agent, agentPrefix) {
 						t.Fatalf("Ubuntu 24 selection lost its compatible agent toolchain: output=%s, agent=%s", build.Name, agent)
 					}
 					if len(build.CatalogSnapshot.Components[diskRoot].Patches) != 0 {
@@ -518,6 +534,25 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					}
 				} else if strings.Contains(build.Name, "ubuntu24") || agent != image {
 					t.Fatalf("default recipe changed: output=%s, agent=%s", build.Name, agent)
+				}
+				if strings.Contains(script, "harbor") {
+					for _, name := range []string{"catalog/registry.yaml", "environment-local.yaml"} {
+						raw, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt", name))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if strings.Contains(string(raw), "docker.io/") {
+							t.Fatalf("frozen %s still references docker.io", name)
+						}
+					}
+					registry, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt/catalog/registry.yaml"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !strings.Contains(string(registry), "harbor.cbr01.in.firmus.co/dockerhub/moby/buildkit@sha256:") ||
+						!strings.Contains(string(registry), "harbor.cbr01.in.firmus.co/dockerhub/library/ubuntu@sha256:") {
+						t.Fatal("frozen catalog did not rewrite Docker Hub image references")
+					}
 				}
 			})
 		}

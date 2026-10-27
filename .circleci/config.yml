@@ -336,7 +336,7 @@ jobs:
               exit 1
             fi
             NVKE_OS_UBUNTU_VERSION=24.04 NVKE_OS_ARCH=amd64 \
-              scripts/nvke-os-local.sh "circleci-${CIRCLE_BUILD_NUM}" 4
+              scripts/nvke-os-local-harbor.sh "circleci-${CIRCLE_BUILD_NUM}" 4
       - run:
           name: Record the disk digest
           command: |

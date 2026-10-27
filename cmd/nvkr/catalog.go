@@ -63,7 +63,10 @@ func cmdCatalog() *cli.Command {
 			{
 				Name:  "digest",
 				Usage: "print the exact resolved catalog snapshot digest used to pin an ordered component overlay",
-				Flags: []cli.Flag{&cli.StringFlag{Name: "data", Required: true, Usage: "path to the catalog directory"}},
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "data", Required: true, Usage: "path to the catalog directory"},
+					&cli.StringSliceFlag{Name: "overlay", Usage: "ordered catalog overlay applied before the snapshot digest is printed (repeatable)"},
+				},
 				Action: func(c *cli.Context) error {
 					view, err := selectCommandPresentation(c)
 					if err != nil {
@@ -74,7 +77,7 @@ func cmdCatalog() *cli.Command {
 					if err != nil {
 						return showCommandResult(c, view, display, err)
 					}
-					digest, err := cat.SnapshotDigest()
+					digest, err := catalogSnapshotDigest(c.Context, cat, c.StringSlice("overlay"))
 					if err != nil {
 						return showCommandResult(c, view, display, err)
 					}
@@ -280,6 +283,27 @@ func pinArtifacts(c *cli.Context) error {
 
 func catalogCommandDisplay(title string) commandDisplay {
 	return commandDisplay{Title: title, Note: "Catalog metadata and maintenance only; producer execution and release verification are separate."}
+}
+
+// catalogSnapshotDigest prints the base snapshot, or the snapshot after the named
+// overlays have been applied in order. Each overlay must already pin its predecessor.
+func catalogSnapshotDigest(ctx context.Context, cat *catalog.Catalog, overlayPaths []string) (string, error) {
+	if len(overlayPaths) == 0 {
+		return cat.SnapshotDigest()
+	}
+	overlays := make([]catalog.Overlay, 0, len(overlayPaths))
+	for _, path := range overlayPaths {
+		overlay, err := catalog.LoadOverlayContext(ctx, path)
+		if err != nil {
+			return "", err
+		}
+		overlays = append(overlays, overlay)
+	}
+	stack, err := catalog.ApplyStack(cat, overlays...)
+	if err != nil {
+		return "", err
+	}
+	return stack.Digest, nil
 }
 
 func sourcePinFields(pin catalog.Pin) []progress.Field {
