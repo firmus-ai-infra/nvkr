@@ -26,28 +26,28 @@ parameters:
   # Build and record the Ubuntu 24.04.5 AMD64 node image. Does not affect nvkectl.
   build_node_image:
     type: boolean
-    default: false
+    default: true
   # Upload the node-image disk. This step runs only inside node-os-image.
   publish_node_image:
     type: boolean
-    default: false
+    default: true
   # Build the AMD64 controller image. Does not build charts or the node image.
   build_controller_image:
     type: boolean
-    default: true
+    default: false
   # Push the image-only attempt. This step runs only inside controller-image.
   publish_controller_image:
     type: boolean
-    default: true
+    default: false
   # Build the AMD64 controller, NKTP, and OVN charts. Does not start the image-only workflow.
   build_charts:
     type: boolean
-    default: true
+    default: false
   # Push the chart attempt, including the controller image that attempt bound.
   # This step runs only inside the chart workflow.
   publish_charts:
     type: boolean
-    default: true
+    default: false
 
 executors:
   controller:
