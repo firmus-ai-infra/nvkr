@@ -536,22 +536,24 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					t.Fatalf("default recipe changed: output=%s, agent=%s", build.Name, agent)
 				}
 				if strings.Contains(script, "harbor") {
-					for _, name := range []string{"catalog/registry.yaml", "environment-local.yaml"} {
-						raw, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt", name))
-						if err != nil {
-							t.Fatal(err)
-						}
-						if strings.Contains(string(raw), "docker.io/") {
-							t.Fatalf("frozen %s still references docker.io", name)
-						}
+					environment, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt/environment-local.yaml"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if strings.Contains(string(environment), "docker.io/") {
+						t.Fatal("frozen Environment still references docker.io")
 					}
 					registry, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt/catalog/registry.yaml"))
 					if err != nil {
 						t.Fatal(err)
 					}
+					const ubuntuBase = "build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@sha256:"
 					if !strings.Contains(string(registry), "harbor.cbr01.in.firmus.co/dockerhub/moby/buildkit@sha256:") ||
-						!strings.Contains(string(registry), "harbor.cbr01.in.firmus.co/dockerhub/library/ubuntu@sha256:") {
-						t.Fatal("frozen catalog did not rewrite Docker Hub image references")
+						!strings.Contains(string(registry), ubuntuBase) {
+						t.Fatal("frozen catalog did not keep the host Harbor pulls and the nested Ubuntu base")
+					}
+					if strings.Contains(strings.ReplaceAll(string(registry), ubuntuBase, ""), "docker.io/") {
+						t.Fatal("frozen catalog rewrote the nested Ubuntu base or left another docker.io reference")
 					}
 				}
 			})

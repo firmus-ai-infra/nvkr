@@ -13,9 +13,10 @@ Usage: scripts/nvke-os-local-harbor.sh ATTEMPT [JOBS]
 
 Build the locked local toolchain, freeze the exact authored recipe under
 .nvkr/inputs/ATTEMPT, and execute one local non-FDE NVKE OS build on native Linux
-with Docker and KVM. Docker Hub image references in the frozen attempt are
-rewritten to harbor.cbr01.in.firmus.co/dockerhub. This is a development bootstrap
-route.
+with Docker and KVM. Docker Hub image references the host daemon pulls are
+rewritten to harbor.cbr01.in.firmus.co/dockerhub. The OVN image's Ubuntu base
+stays on Docker Hub because nested BuildKit does not use the host certificate
+store. This is a development bootstrap route.
 
 CONTAINER_RUNTIME defaults to docker; this launcher requires Docker.
 Set NVKE_OS_ARCH=amd64 or NVKE_OS_ARCH=arm64. ARM64 is the compatibility default.
@@ -26,20 +27,22 @@ EOF
 }
 
 rewrite_frozen_harbor_images() {
-  python3 - "$1" "${harbor_registry}" <<'PY'
+  python3 - "$1" "${harbor_registry}" "${packer_base#ubuntu@}" <<'PY'
 import pathlib, re, sys
-path, registry = sys.argv[1], sys.argv[2]
+path, registry, ubuntu_digest = sys.argv[1], sys.argv[2], sys.argv[3]
 file = pathlib.Path(path)
 text = file.read_text()
 updated = text
 for old, new in (
-    ("docker.io/library/ubuntu@sha256:", f"{registry}/library/ubuntu@sha256:"),
     ("docker.io/library/golang@sha256:", f"{registry}/library/golang@sha256:"),
     ("moby/buildkit@sha256:", f"{registry}/moby/buildkit@sha256:"),
     ("utilityContainer: golang@sha256:", f"utilityContainer: {registry}/library/golang@sha256:"),
 ):
     updated = updated.replace(old, new)
-if "docker.io/" in updated:
+# Nested BuildKit fetches this base itself. The host Docker CA store does not
+# apply there, so this one pin stays on Docker Hub.
+allowed = f"build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@{ubuntu_digest}"
+if "docker.io/" in updated.replace(allowed, ""):
     raise SystemExit(f"docker hub reference remains in {path}")
 if re.search(r"(?<![\w./-])moby/buildkit@sha256:", updated):
     raise SystemExit(f"unrewritten buildkit reference remains in {path}")
