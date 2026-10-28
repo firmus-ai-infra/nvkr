@@ -45,7 +45,7 @@ sources:
           echo 'agent module pins changed during vendoring' >&2; exit 1;
         }
   nvke-cni-calico-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
+    repo: https://github.com/firmus-ai-infra/nvke.git
     constraint: v0.22.0
     toolchainImagesByArch:
       amd64: sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0
