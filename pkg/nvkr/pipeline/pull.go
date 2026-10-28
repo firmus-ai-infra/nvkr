@@ -8,8 +8,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -226,35 +228,138 @@ func downloadReleaseExecutableWithClient(ctx context.Context, node ir.Node, root
 	return writeVerifiedDownload(ctx, bytes.NewReader(member), node.Artifact, root, relative, node.Digest, maxReleaseBytes)
 }
 
+const (
+	downloadAttempts     = 3
+	downloadStallTimeout = 2 * time.Minute
+	downloadRetryBackoff = 15 * time.Second
+)
+
+type downloadVerifyOptions struct {
+	attempts     int
+	stallTimeout time.Duration
+	retryBackoff time.Duration
+}
+
+var defaultDownloadVerifyOptions = downloadVerifyOptions{
+	attempts:     downloadAttempts,
+	stallTimeout: downloadStallTimeout,
+	retryBackoff: downloadRetryBackoff,
+}
+
 // downloadVerify streams url into a private sibling while hashing, and publishes it
 // only after the bytes match want (sha256:<hex>) and the file is durable. The parent
 // path is held descriptor-relative with O_NOFOLLOW; renameat replaces a pre-existing
 // destination symlink itself instead of following it to a host target. Every error
 // unlinks only the private temporary file and leaves any prior destination untouched.
+//
+// An exact-byte download can be safely retried after a transient transport failure:
+// each attempt starts with a private sibling and only publishes after digest
+// verification. A slow transfer is admitted as long as it makes progress; an idle
+// response is bounded and retried with backoff.
 func downloadVerify(ctx context.Context, url, root, relative, want string) (string, int64, error) {
+	return downloadVerifyWithOptions(ctx, url, root, relative, want, defaultDownloadVerifyOptions)
+}
+
+func downloadVerifyWithOptions(ctx context.Context, url, root, relative, want string, options downloadVerifyOptions) (string, int64, error) {
 	if ctx == nil {
 		return "", 0, e.New(e.CodeUsage, "downloading a pinned artifact requires a non-nil context")
 	}
 	if err := ctx.Err(); err != nil {
 		return "", 0, e.Wrap(e.CodeTimeout, err, "downloading %s canceled", url)
 	}
-	client := &http.Client{Timeout: 10 * time.Minute}
-	if _, bounded := ctx.Deadline(); bounded {
-		client.Timeout = 0
+	if options.attempts < 1 || options.stallTimeout <= 0 || options.retryBackoff < 0 {
+		return "", 0, e.New(e.CodeUsage, "download retry options must have attempts >= 1, a positive stall timeout, and a non-negative retry backoff")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	var lastErr error
+	for attempt := 1; attempt <= options.attempts; attempt++ {
+		sum, size, err := downloadVerifyOnce(ctx, url, root, relative, want, options.stallTimeout)
+		if err == nil {
+			return sum, size, nil
+		}
+		if ctx.Err() != nil || !e.Retryable(err) || attempt == options.attempts {
+			return "", 0, err
+		}
+		lastErr = err
+		delay := time.Duration(attempt) * options.retryBackoff
+		if err := waitDownloadRetry(ctx, delay); err != nil {
+			return "", 0, err
+		}
+	}
+	return "", 0, lastErr
+}
+
+func downloadVerifyOnce(ctx context.Context, url, root, relative, want string, stallTimeout time.Duration) (string, int64, error) {
+	attemptCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = stallTimeout
+	client := &http.Client{Transport: transport}
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", 0, e.Wrap(e.CodeFetchFailed, err, "constructing GET %s", url)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", 0, mapCancellation(ctx, e.Wrap(e.CodeFetchFailed, err, "GET %s", url), "downloading "+url)
+		wrapped := e.Wrap(e.CodeFetchFailed, err, "GET %s", url)
+		if isTransientDownloadError(err) {
+			wrapped = e.Wrap(e.CodeUnavailable, err, "GET %s", url)
+		}
+		return "", 0, mapCancellation(attemptCtx, wrapped, "downloading "+url)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", 0, e.New(e.CodeFetchFailed, "GET %s: HTTP %s", url, resp.Status)
 	}
-	return writeVerifiedDownload(ctx, resp.Body, url, root, relative, want, 0)
+	body := &downloadStallReader{source: resp.Body, cancel: cancel, timeout: stallTimeout, timer: time.AfterFunc(stallTimeout, cancel)}
+	defer body.Close()
+	sum, size, err := writeVerifiedDownload(attemptCtx, body, url, root, relative, want, 0)
+	if err != nil && isTransientDownloadError(err) {
+		return "", 0, e.Wrap(e.CodeUnavailable, err, "downloading %s", url)
+	}
+	return sum, size, err
+}
+
+func waitDownloadRetry(ctx context.Context, delay time.Duration) error {
+	if delay == 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return e.Wrap(e.CodeTimeout, ctx.Err(), "waiting to retry download canceled")
+	case <-timer.C:
+		return nil
+	}
+}
+
+type downloadStallReader struct {
+	source  io.ReadCloser
+	cancel  context.CancelFunc
+	timeout time.Duration
+	timer   *time.Timer
+}
+
+func (r *downloadStallReader) Read(p []byte) (int, error) {
+	n, err := r.source.Read(p)
+	if n > 0 {
+		r.timer.Stop()
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
+}
+
+func (r *downloadStallReader) Close() error {
+	r.timer.Stop()
+	return r.source.Close()
+}
+
+func isTransientDownloadError(err error) bool {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr) && (networkErr.Timeout() || networkErr.Temporary())
 }
 
 // writeVerifiedDownload is shared by HTTPS files and OCI archive blobs. It never

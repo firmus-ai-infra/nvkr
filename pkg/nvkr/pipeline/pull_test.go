@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,7 +108,8 @@ func TestDownloadVerifyNeverFollowsDestinationSymlinksOrPublishesPartialBytes(t 
 	if err := os.WriteFile(previous, []byte("previous-good-bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := downloadVerify(context.Background(), srv.URL+"/partial", root, "partial", sha256Of(body)); code(err) != nvkrerr.CodeFetchFailed {
+	oneAttempt := downloadVerifyOptions{attempts: 1, stallTimeout: time.Second, retryBackoff: 0}
+	if _, _, err := downloadVerifyWithOptions(context.Background(), srv.URL+"/partial", root, "partial", sha256Of(body), oneAttempt); code(err) != nvkrerr.CodeUnavailable {
 		t.Fatalf("partial response must fail without publishing bytes: %v", err)
 	}
 	if got, err := os.ReadFile(previous); err != nil || string(got) != "previous-good-bytes" {
@@ -187,6 +189,69 @@ func TestDownloadVerifyCancellationNeverPublishes(t *testing.T) {
 	}
 	if got, err := os.ReadFile(destination); err != nil || string(got) != "previous-good" {
 		t.Fatalf("canceled download changed prior destination: %q %v", got, err)
+	}
+}
+
+func TestDownloadVerifyRetriesOnlyTransientTransfers(t *testing.T) {
+	body := []byte("the-real-pinned-artifact-bytes")
+	options := downloadVerifyOptions{attempts: 3, stallTimeout: 20 * time.Millisecond, retryBackoff: time.Millisecond}
+	t.Run("stalled transfer retries and succeeds", func(t *testing.T) {
+		var requests atomic.Int32
+		stalled := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if requests.Add(1) == 1 {
+				close(stalled)
+				<-request.Context().Done()
+				return
+			}
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+
+		sum, size, err := downloadVerifyWithOptions(context.Background(), srv.URL, t.TempDir(), "artifact", sha256Of(body), options)
+		if err != nil {
+			t.Fatalf("retryable stalled transfer: %v", err)
+		}
+		if sum != sha256Of(body) || size != int64(len(body)) || requests.Load() != 2 {
+			t.Fatalf("sum=%s size=%d requests=%d", sum, size, requests.Load())
+		}
+		select {
+		case <-stalled:
+		default:
+			t.Fatal("server did not receive the stalled first request")
+		}
+	})
+
+	for _, test := range []struct {
+		name string
+		want string
+	}{
+		{name: "digest mismatch", want: sha256Of([]byte("different-pinned-artifact"))},
+		{name: "not found", want: sha256Of(body)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				requests.Add(1)
+				if test.name == "not found" {
+					http.NotFound(w, request)
+					return
+				}
+				_, _ = w.Write(body)
+			}))
+			defer srv.Close()
+
+			_, _, err := downloadVerifyWithOptions(context.Background(), srv.URL, t.TempDir(), "artifact", test.want, options)
+			if requests.Load() != 1 {
+				t.Fatalf("non-retryable %s made %d requests", test.name, requests.Load())
+			}
+			if test.name == "digest mismatch" && code(err) != nvkrerr.CodeVerifyFailed {
+				t.Fatalf("digest mismatch code=%s, error=%v", code(err), err)
+			}
+			if test.name == "not found" && code(err) != nvkrerr.CodeFetchFailed {
+				t.Fatalf("404 code=%s, error=%v", code(err), err)
+			}
+		})
 	}
 }
 
