@@ -370,20 +370,6 @@ jobs:
               "${attempt}" "${CIRCLE_BUILD_NUM}" "${size}" "${digest}" \
               > "${outdir}/build-info.txt"
             test -f ".nvkr/runs/${attempt}/lifecycle.json"
-      - run:
-          name: Stage the digest and attempt record
-          command: |
-            set -euo pipefail
-            attempt="circleci-${CIRCLE_BUILD_NUM}"
-            outdir=".nvkr/runs/${attempt}/outputs"
-            dest="/tmp/nvkr-node-image-meta"
-            mkdir -p "${dest}"
-            cp "${outdir}/nvke-node-image-ubuntu24-amd64.qcow2.sha256" "${dest}/"
-            cp "${outdir}/build-info.txt" "${dest}/"
-            cp ".nvkr/runs/${attempt}/lifecycle.json" "${dest}/"
-      - store_artifacts:
-          path: /tmp/nvkr-node-image-meta
-          destination: node-image
       - when:
           condition: << pipeline.parameters.publish_node_image >>
           steps:
@@ -393,6 +379,22 @@ jobs:
                   set -euo pipefail
                   scripts/push-node-image-s3.sh \
                     ".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/outputs/nvke-node-image-ubuntu24-amd64.qcow2"
+      - run:
+          name: Stage the digest and attempt record
+          command: |
+            set -euo pipefail
+            attempt="circleci-${CIRCLE_BUILD_NUM}"
+            outdir=".nvkr/runs/${attempt}/outputs"
+            # Stage inside this job's working directory. The runner keeps /tmp
+            # between jobs, so a shared /tmp path can hold files this user cannot write.
+            dest="nvkr-node-image-meta"
+            mkdir -p "${dest}"
+            cp "${outdir}/nvke-node-image-ubuntu24-amd64.qcow2.sha256" "${dest}/"
+            cp "${outdir}/build-info.txt" "${dest}/"
+            cp ".nvkr/runs/${attempt}/lifecycle.json" "${dest}/"
+      - store_artifacts:
+          path: nvkr-node-image-meta
+          destination: node-image
 
   build-controller-image:
     executor: controller
