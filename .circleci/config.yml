@@ -492,8 +492,11 @@ jobs:
                 when: always
                 command: |
                   set -euo pipefail
-                  if [ -d .nvkr ]; then
-                    rm -rf .nvkr
+                  # This runner keeps the checkout. Remove only this job's attempt.
+                  # The node image stays at .nvkr/runs/circleci-<its build number>/outputs.
+                  attempt_dir=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-image"
+                  if [ -d "${attempt_dir}" ]; then
+                    rm -rf "${attempt_dir}"
                   fi
 
   build-charts:
@@ -592,8 +595,11 @@ jobs:
                 when: always
                 command: |
                   set -euo pipefail
-                  if [ -d .nvkr ]; then
-                    rm -rf .nvkr
+                  # This runner keeps the checkout. Remove only this job's attempt.
+                  # The node image stays at .nvkr/runs/circleci-<its build number>/outputs.
+                  attempt_dir=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-charts"
+                  if [ -d "${attempt_dir}" ]; then
+                    rm -rf "${attempt_dir}"
                   fi
 
 workflows:
