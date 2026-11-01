@@ -126,6 +126,75 @@ commands:
               echo "docker is not available" >&2
               exit 1
             fi
+  reclaim-workspace:
+    description: Give root-owned checkout files back to the runner user
+    steps:
+      - run:
+          name: Reclaim root-owned workspace files
+          when: always
+          command: |
+            set -euo pipefail
+            # The circleci user has no passwordless sudo. Isolated oci-hermetic
+            # builds bind-mount this checkout and run as root, so mkdir leaves
+            # directories the next task cannot unlink. Do not delete the tree:
+            # this runner keeps the checkout, including a node image from an
+            # earlier job. chown only this working directory.
+            case "${PWD}" in
+              /*) ;;
+              *)
+                echo "workspace path is not absolute" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${PWD}" = "/" ]; then
+              echo "refusing to reclaim the host root" >&2
+              exit 1
+            fi
+            if ! docker info >/dev/null 2>&1; then
+              echo "docker is unavailable; root-owned workspace files cannot be reclaimed" >&2
+              exit 1
+            fi
+            uid="$(id -u)"
+            gid="$(id -g)"
+            candidates="$(docker image ls --no-trunc --format '{{.ID}}' | awk 'NF && !seen[$0]++')"
+            if [ -z "${candidates}" ]; then
+              echo "no local image provides chown; root-owned workspace files cannot be reclaimed" >&2
+              exit 1
+            fi
+            image=""
+            rest="${candidates}"
+            while [ -n "${rest}" ]; do
+              candidate="${rest%%$'\n'*}"
+              case "${rest}" in
+                *$'\n'*) rest="${rest#*$'\n'}" ;;
+                *) rest="" ;;
+              esac
+              [ -n "${candidate}" ] || continue
+              # Prove this image's chown runs under the same restrictions as the
+              # reclaim. --pull=never stays on images already loaded by the build.
+              if docker run --rm --pull=never --network=none --read-only \
+                --tmpfs /probe:rw,nosuid,nodev,mode=0700 \
+                --user 0:0 \
+                --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
+                --security-opt no-new-privileges \
+                --entrypoint chown \
+                "${candidate}" "${uid}:${gid}" /probe >/dev/null 2>&1; then
+                image="${candidate}"
+                break
+              fi
+            done
+            if [ -z "${image}" ]; then
+              echo "no local image provides chown; root-owned workspace files cannot be reclaimed" >&2
+              exit 1
+            fi
+            printf 'reclaiming workspace ownership with %s\n' "${image}"
+            docker run --rm --pull=never --network=none --read-only \
+              --user 0:0 \
+              --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
+              --security-opt no-new-privileges \
+              --entrypoint chown \
+              -v "${PWD}:/work" \
+              "${image}" -R "${uid}:${gid}" /work
 
 jobs:
   build-artefacts:
@@ -285,6 +354,8 @@ jobs:
                 path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
+            - reclaim-workspace:
+                when: always
 
   build-node-os-image:
     executor: controller
@@ -395,6 +466,8 @@ jobs:
       - store_artifacts:
           path: nvkr-node-image-meta
           destination: node-image
+      - reclaim-workspace:
+          when: always
 
   build-controller-image:
     executor: controller
@@ -486,6 +559,8 @@ jobs:
             - store_artifacts:
                 path: nvkr-artifacts
                 destination: nvkr-attempt
+                when: always
+            - reclaim-workspace:
                 when: always
             - run:
                 name: Remove the NVKR attempt directory
@@ -589,6 +664,8 @@ jobs:
             - store_artifacts:
                 path: nvkr-artifacts
                 destination: nvkr-attempt
+                when: always
+            - reclaim-workspace:
                 when: always
             - run:
                 name: Remove the NVKR attempt directory
