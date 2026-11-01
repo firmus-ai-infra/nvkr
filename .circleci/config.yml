@@ -138,7 +138,9 @@ commands:
             # builds bind-mount this checkout and run as root, so mkdir leaves
             # directories the next task cannot unlink. Do not delete the tree:
             # this runner keeps the checkout, including a node image from an
-            # earlier job. chown only this working directory.
+            # earlier job. chown only this working directory. --userns=host is
+            # required: a remapped container root cannot change files owned by
+            # the host's real root, which is what blocks the next task.
             case "${PWD}" in
               /*) ;;
               *)
@@ -173,6 +175,7 @@ commands:
               # Prove this image's chown runs under the same restrictions as the
               # reclaim. --pull=never stays on images already loaded by the build.
               if docker run --rm --pull=never --network=none --read-only \
+                --userns=host \
                 --tmpfs /probe:rw,nosuid,nodev,mode=0700 \
                 --user 0:0 \
                 --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
@@ -189,12 +192,19 @@ commands:
             fi
             printf 'reclaiming workspace ownership with %s\n' "${image}"
             docker run --rm --pull=never --network=none --read-only \
+              --userns=host \
               --user 0:0 \
               --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
               --security-opt no-new-privileges \
               --entrypoint chown \
               -v "${PWD}:/work" \
               "${image}" -R "${uid}:${gid}" /work
+            remaining="$(find "${PWD}" -xdev \( ! -user "${uid}" -o ! -group "${gid}" \) -print)"
+            if [ -n "${remaining}" ]; then
+              printf '%s\n' "${remaining}" | head -n 20 >&2
+              echo "workspace still contains files the next task cannot delete" >&2
+              exit 1
+            fi
 
 jobs:
   build-artefacts:
