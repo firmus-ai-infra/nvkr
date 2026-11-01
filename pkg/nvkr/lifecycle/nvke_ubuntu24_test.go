@@ -5,6 +5,8 @@ package lifecycle
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -78,7 +80,25 @@ func TestNVKEUbuntu24NativeDiskSelections(t *testing.T) {
 						packer.Variables["ubuntu_series"] = "26.04"
 						producer.Packer = &packer
 					}
+					if component == "nvke-node-image-amd64" {
+						if len(producer.Patches) != 1 {
+							t.Fatalf("AMD64 Ubuntu 24 disk patches = %+v, want one UEFI fallback", producer.Patches)
+						}
+						patch := producer.Patches[0]
+						if patch.Name != "uefi-shell-fallback-amd64.patch" ||
+							patch.SHA256 != "sha256:c1a9092fe54a045fedbc3094d233373d0e4d3e10105c0e19db20d5ee94b51f36" ||
+							patch.SHA256 != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(patch.Content))) ||
+							!strings.Contains(patch.Content, "startup.nsh") ||
+							!strings.Contains(patch.Content, "BOOTX64.EFI") ||
+							strings.Contains(patch.Content, "BOOTAA64.EFI") {
+							t.Fatalf("AMD64 Ubuntu 24 UEFI fallback patch = %+v", patch)
+						}
+						producer.Patches = nil
+					} else if len(producer.Patches) != 0 {
+						t.Fatalf("Ubuntu 24 producer %s unexpectedly carries patches: %+v", component, producer.Patches)
+					}
 					if component != "nvke-agent" && component != "ubuntu-installer-iso" && component != "ubuntu-installer-iso-amd64" &&
+						component != "nvke-node-image-amd64" &&
 						!reflect.DeepEqual(producer, original.CatalogSnapshot.Components[component]) {
 						t.Fatalf("Ubuntu selection unexpectedly changed unrelated producer %s", component)
 					}
@@ -99,6 +119,14 @@ func TestNVKEUbuntu24NativeDiskSelections(t *testing.T) {
 					if node.Component != root || node.SourceCommit != sourcePin.Commit || node.SourceTreeHash != sourcePin.TreeHash || node.Packer == nil ||
 						node.Disk == nil || node.ExecutionBinding == nil || node.Requirements == nil {
 						t.Fatal("Ubuntu 24 disk lost its source-owned native Packer contract")
+					}
+					if node.Component == "nvke-node-image-amd64" && variant.output == "image" {
+						if len(node.Patches) != 1 || node.Patches[0].Name != "uefi-shell-fallback-amd64.patch" ||
+							!strings.Contains(node.Patches[0].Content, "BOOTX64.EFI") {
+							t.Fatalf("AMD64 Ubuntu 24 disk node lost its UEFI fallback patch: %+v", node.Patches)
+						}
+					} else if len(node.Patches) != 0 {
+						t.Fatalf("Ubuntu 24 disk node unexpectedly carries patches: %+v", node.Patches)
 					}
 					if node.Packer.BuildName != "nvke-node-"+variant.source+".qemu.nvke-"+variant.source ||
 						node.ArtifactPath != variant.source+"/nvke-node.qcow2" || node.Packer.AcquisitionArchive != variant.source+"/apt-acquisitions.tar" ||
@@ -143,6 +171,33 @@ func TestNVKEUbuntu24NativeDiskSelections(t *testing.T) {
 						digest, err := graph.Digest()
 						if err != nil || digest == build.BuildDigest {
 							t.Fatalf("restoring %s must change Build identity: %s / %v", component, digest, err)
+						}
+					})
+				}
+				if root == "nvke-node-image-amd64" && variant.output == "image" {
+					t.Run("remove-uefi-fallback-patch", func(t *testing.T) {
+						producer := build.CatalogSnapshot.Components[root]
+						producer.Patches = nil
+						stack, err := catalog.ApplyStack(build.CatalogSnapshot, catalog.Overlay{
+							APIVersion: catalog.OverlayAPIVersion, Kind: catalog.OverlayKind, Name: "remove-uefi-fallback",
+							RequiresCatalogDigest: build.CatalogDigest,
+							Components:            map[string]catalog.ComponentReplacement{root: {Component: &producer}},
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						selected, err := buildgraph.Resolve(stack.Catalog, buildgraph.Selection{
+							Components: build.Components, Platform: build.Platform, OutputFormat: definition.OutputDiskImage,
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						graph, err := buildgraph.CompileForHostPlatforms(selected, map[string]execution.HostPlatform{root: execution.HostPlatform(build.Platform)})
+						if err != nil {
+							t.Fatal(err)
+						}
+						if digest, err := graph.Digest(); err != nil || digest == build.BuildDigest {
+							t.Fatalf("removing UEFI fallback patch must change Build identity: %s / %v", digest, err)
 						}
 					})
 				}

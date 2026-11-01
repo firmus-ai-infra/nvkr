@@ -1313,11 +1313,17 @@ No new external Run or deleted package is claimed. ADR-04/18/20/21 own the contr
 ## Ubuntu 24 node-image inputs
 
 The opt-in `inputs/definitions/diagnostics/ubuntu24` selections reuse M2's NVKE source
-`ff21ba8c07cafff74b68e238a8876af11e5beded`, including upstream Ubuntu 24 support from
-`96ccc50cb7f8ed8bb08f7cf8655906982774f809`. A predecessor-bound whole-producer overlay
+`400c24fb6465b042be883d6b62472528520d6291`. A predecessor-bound whole-producer overlay
 selects Ubuntu 24.04.5 installer bytes for each native architecture and a separate
 Go 1.27.2 Bookworm agent builder. The authenticated installer material selects the guest
-OS; no new Packer variable or NVKR platform axis is introduced. Preparation checks both
+OS; no new Packer variable or NVKR platform axis is introduced. The Ubuntu 24 AMD64 plain
+disk producer additionally carries one SHA-256-pinned source patch. The CircleCI
+`node-os-image` job freezes this same overlay through `scripts/nvke-os-local-harbor.sh`,
+which rebinds predecessor digests for the attempt. The patch stages `startup.nsh`
+on the final ESP after the installer boots the target and chains `\EFI\BOOT\BOOTX64.EFI`
+when firmware enters the built-in UEFI shell before the disk entry. The patch does not
+apply to ARM64 or FDE producers and does not add GB300-specific boot-order rewriting.
+Preparation checks both
 nFPM archive and executable pins; the agent stays dynamically linked and must pass the
 pinned upstream ELF checker for the Ubuntu loader and GLIBC <= 2.39. Its updater must
 remain a static ELF without a program interpreter, matching the pinned upstream check.
@@ -1329,11 +1335,11 @@ finalization retains its one-disk limit. The supplied Environments generate raw-
 `static-unqualified` Runs without signing or publication. Ubuntu 26 defaults, maintained
 M2 membership, and committed workflow bundles retain their existing selections.
 `pkg/nvkr/lifecycle/nvke_ubuntu24_test.go` covers compilation, exact closure/pins, changed
-Build identity, native KVM admission and deterministic generation. Script fixtures cover
-selection and frozen-input routing through the shared release catalog. Disk producers
-retain stock NVKE capture source; the material owner accepts its original acquisition schema. The input-layout migration preserves the agent preparation
+Build identity, native KVM admission and deterministic generation. The CircleCI Harbor
+freeze fixture requires the AMD64 plain disk to retain the UEFI fallback patch and requires
+ARM64 to retain stock source. The material owner accepts its original acquisition schema. The input-layout migration preserves the agent preparation
 and build recipe used in the package exercise below. This is contract evidence: no Ubuntu 24 KVM bake,
-guest boot, full acquired-payload ABI inspection, agent-start smoke, release publication
+guest boot (including the UEFI-shell fallback), full acquired-payload ABI inspection, agent-start smoke, release publication
 or qualification is established by these tests. ADR-10/11/18/22 own the unchanged contracts.
 
 On 2026-10-19 (UTC), a local native ARM64 container exercise ran the exact overlay preparation

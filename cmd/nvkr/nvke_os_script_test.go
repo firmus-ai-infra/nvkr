@@ -524,8 +524,15 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					if !strings.Contains(build.Name, "ubuntu24") || agent == image || !strings.HasPrefix(agent, agentPrefix) {
 						t.Fatalf("Ubuntu 24 selection lost its compatible agent toolchain: output=%s, agent=%s", build.Name, agent)
 					}
-					if len(build.CatalogSnapshot.Components[diskRoot].Patches) != 0 {
-						t.Fatal("frozen disk must preserve stock upstream source")
+					patches := build.CatalogSnapshot.Components[diskRoot].Patches
+					if arch == "amd64" {
+						if len(patches) != 1 || patches[0].Name != "uefi-shell-fallback-amd64.patch" ||
+							!strings.Contains(patches[0].Content, "BOOTX64.EFI") ||
+							strings.Contains(patches[0].Content, "BOOTAA64.EFI") {
+							t.Fatalf("frozen AMD64 Ubuntu 24 disk lost its UEFI shell fallback: %+v", patches)
+						}
+					} else if len(patches) != 0 {
+						t.Fatal("frozen ARM64 disk must preserve stock upstream source")
 					}
 					for _, name := range []string{"native-toolchains.yaml", "ubuntu24.json"} {
 						if _, err := os.Stat(filepath.Join(root, ".nvkr/inputs/test-attempt", name)); err != nil {
