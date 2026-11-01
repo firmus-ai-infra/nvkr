@@ -354,8 +354,7 @@ jobs:
                 path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
-            - reclaim-workspace:
-                when: always
+            - reclaim-workspace
 
   build-node-os-image:
     executor: controller
@@ -466,8 +465,7 @@ jobs:
       - store_artifacts:
           path: nvkr-node-image-meta
           destination: node-image
-      - reclaim-workspace:
-          when: always
+      - reclaim-workspace
 
   build-controller-image:
     executor: controller
@@ -560,8 +558,7 @@ jobs:
                 path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
-            - reclaim-workspace:
-                when: always
+            - reclaim-workspace
             - run:
                 name: Remove the NVKR attempt directory
                 when: always
@@ -665,8 +662,7 @@ jobs:
                 path: nvkr-artifacts
                 destination: nvkr-attempt
                 when: always
-            - reclaim-workspace:
-                when: always
+            - reclaim-workspace
             - run:
                 name: Remove the NVKR attempt directory
                 when: always
@@ -686,6 +682,7 @@ workflows:
       # Feature branches prove the Definition and the plan. They do not build.
       - build-artefacts:
           name: verify
+          execute: false
           filters:
             branches:
               ignore: main
