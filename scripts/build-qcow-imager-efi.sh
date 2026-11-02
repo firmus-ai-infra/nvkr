@@ -39,10 +39,6 @@ command -v git >/dev/null 2>&1 || { echo "ERROR: git is required." >&2; exit 1; 
 command -v make >/dev/null 2>&1 || { echo "ERROR: make is required." >&2; exit 1; }
 command -v file >/dev/null 2>&1 || { echo "ERROR: file is required." >&2; exit 1; }
 command -v mc >/dev/null 2>&1 || { echo "ERROR: mc (minio client) not found." >&2; exit 1; }
-if ! sudo -n true >/dev/null 2>&1; then
-  echo "ERROR: passwordless sudo is required to install the EFI build packages." >&2
-  exit 1
-fi
 
 src="${PWD}/.nvkr/nvke-efi-src"
 if [[ -e "${src}" ]]; then
@@ -55,7 +51,8 @@ git -C "${src}" remote add origin "${nvke_repo}"
 GIT_TERMINAL_PROMPT=0 git -C "${src}" fetch --depth 1 origin "${nvke_commit}"
 git -C "${src}" checkout -q --detach FETCH_HEAD
 
-make -C "${src}/os-image/efi" setup-host
+# setup-host installs packages and changes host sysctls. The runner owner does
+# that once. This job only checks the prepared host and builds.
 export PATH="${HOME}/.cargo/bin:${PATH}"
 make -C "${src}/os-image/efi" check-deps
 make -C "${src}/os-image/efi" build-efi-x86
