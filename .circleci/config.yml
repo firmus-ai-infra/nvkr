@@ -11,6 +11,8 @@
 # build_charts starts only the chart workflow.
 # publish_charts pushes that Run's charts and bound controller image, and does not start a job.
 # nvkectl and node-os-image do not build the controller image or charts.
+# node-os-image also builds qcow-imager.efi from firmus-ai-infra/nvke and uploads it
+# beside the QCOW2. That step does not build the node disk.
 # NVKR registry publication stays out. Harbor pushes use the publish parameters.
 version: 2.1
 
@@ -374,6 +376,12 @@ jobs:
       S3_PREFIX: nvke-node-image-ubuntu24-amd64
     steps:
       - checkout
+      - run:
+          name: Build and upload qcow-imager.efi
+          no_output_timeout: 60m
+          command: |
+            set -euo pipefail
+            scripts/build-qcow-imager-efi.sh
       - run:
           name: Admit the native KVM host
           command: |
