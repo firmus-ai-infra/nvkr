@@ -122,6 +122,11 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 	if buildKit != nil {
 		args = []string{"create", "--name", cname}
 		buildKit.resources.containers = append(buildKit.resources.containers, cname)
+	} else {
+		// Regular local builds bind-mount authenticated source and output paths
+		// from the caller's workspace. Docker otherwise defaults to root and
+		// leaves a checkout that the runner cannot delete before its next task.
+		args = append(args, localBuildUserArgs()...)
 	}
 	// Run the toolchain on the build's target platform (model B): forces the native
 	// arch variant of a multi-arch toolchain — or emulation on a foreign host — so
@@ -237,6 +242,10 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 		}
 	}
 	return res, nil
+}
+
+func localBuildUserArgs() []string {
+	return []string{"--userns=host", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())}
 }
 
 func buildMaterialMountArgs(root string) []string {

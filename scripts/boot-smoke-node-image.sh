@@ -57,6 +57,7 @@ kvm_group="$(stat -c %g /dev/kvm)"
 
 docker run --rm --pull=never --network=none --read-only --cap-drop=all \
   --security-opt no-new-privileges --device /dev/kvm --group-add "${kvm_group}" \
+  --userns=host \
   --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,nodev \
   --mount "type=bind,src=${identity_dir}/passwd,dst=/etc/passwd,readonly" \
   --mount "type=bind,src=${identity_dir}/group,dst=/etc/group,readonly" \

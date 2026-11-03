@@ -244,6 +244,7 @@ fi
 "${runtime}" run --rm --pull=never --network=bridge \
   --read-only --cap-drop=all \
   --security-opt no-new-privileges --security-opt label=disable \
+  --userns=host \
   --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev \
   --volume "${repo_root}:/src:ro" \
