@@ -12,7 +12,8 @@
 # publish_charts pushes that Run's charts and bound controller image, and does not start a job.
 # nvkectl and node-os-image do not build the controller image or charts.
 # node-os-image also builds qcow-imager.efi from firmus-ai-infra/nvke and uploads it
-# beside the QCOW2. That step does not build the node disk.
+# beside the QCOW2. That step does not build the node disk. After the disk is
+# recorded, the job runs NVKE boot-smoke.sh. That boot is diagnostic.
 # NVKR registry publication stays out. Harbor pushes use the publish parameters.
 version: 2.1
 
@@ -458,6 +459,12 @@ jobs:
               "${attempt}" "${CIRCLE_BUILD_NUM}" "${size}" "${digest}" \
               > "${outdir}/build-info.txt"
             test -f ".nvkr/runs/${attempt}/lifecycle.json"
+      - run:
+          name: Boot-smoke the Ubuntu 24 node image
+          no_output_timeout: 45m
+          command: |
+            set -euo pipefail
+            scripts/boot-smoke-node-image.sh
       - when:
           condition: << pipeline.parameters.publish_node_image >>
           steps:
@@ -480,6 +487,9 @@ jobs:
             cp "${outdir}/nvke-node-image-ubuntu24-amd64.qcow2.sha256" "${dest}/"
             cp "${outdir}/build-info.txt" "${dest}/"
             cp ".nvkr/runs/${attempt}/lifecycle.json" "${dest}/"
+            if [ -f .nvkr/evidence/boot-smoke-amd64.log ]; then
+              cp .nvkr/evidence/boot-smoke-amd64.log "${dest}/"
+            fi
       - store_artifacts:
           path: nvkr-node-image-meta
           destination: node-image
