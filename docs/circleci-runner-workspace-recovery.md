@@ -37,11 +37,19 @@ task-launch hook or wrapper to invoke it immediately before it starts a CircleCI
 task:
 
 ```sh
+cd /usr/local/share/nvkr-ca
+cp firmus-dev-issuing-ca.crt firmus_root_ca.crt /usr/local/share/ca-certificates/
+update-ca-certificates
 /usr/local/libexec/nvkr-circleci-workspace-preflight \
   --workspace /var/lib/circleci-runner/workdir \
   --owner RUNNER_UID:RUNNER_GID
 exec /path/to/circleci-runner "$@"
 ```
+
+`/usr/local/share/nvkr-ca` holds `firmus-dev-issuing-ca.crt` and
+`firmus_root_ca.crt`. The copy and `update-ca-certificates` run as root. The
+runner account has no passwordless sudo, and a job step starts after CircleCI
+has already launched the task.
 
 Use the runner platform's per-task hook, not a CircleCI job step. A job command
 is too late: the runner clears the working directory before it can execute

@@ -145,10 +145,11 @@ daemon pulls to `harbor.cbr01.in.firmus.co/dockerhub`. A mirror or
 stays on `harbor.cbr01.in.firmus.co`. Docker matches the certificate directory
 to the host in the request URL, so both names need the same issuing CA.
 
-The file is the issuer PEM, including any intermediate the server omits from
-the handshake. Its subject is the issuer printed below. Docker reads the copy
-named `ca.crt`. The system store reads a `.crt` file under
-`/usr/local/share/ca-certificates`.
+The system store reads `firmus_root_ca.crt` and `firmus-dev-issuing-ca.crt`
+from `/usr/local/share/ca-certificates`. Docker reads a bundle of those two
+files named `ca.crt`. The runner account has no passwordless sudo, so the copy
+runs as root when the runner process starts, from the directory that holds
+the two files. A job step is too late and cannot write that directory.
 
 ```sh
 echo | openssl s_client -connect harbor.cbr01.co:443 \
@@ -161,14 +162,35 @@ Repeat the command with `-connect harbor.cbr01.in.firmus.co:443` and
 `-servername harbor.cbr01.in.firmus.co` before trusting the long name.
 
 ```sh
-sudo cp HARBOR_CA.crt /usr/local/share/ca-certificates/harbor-cbr01.crt
-sudo update-ca-certificates
+cp firmus-dev-issuing-ca.crt firmus_root_ca.crt /usr/local/share/ca-certificates/
+update-ca-certificates
+```
+
+Put that pair at the start of the task-launch wrapper, before the runner
+process replaces the script:
+
+```sh
+cd /usr/local/share/nvkr-ca
+cp firmus-dev-issuing-ca.crt firmus_root_ca.crt /usr/local/share/ca-certificates/
+update-ca-certificates
+/usr/local/libexec/nvkr-circleci-workspace-preflight \
+  --workspace /var/lib/circleci-runner/workdir \
+  --owner RUNNER_UID:RUNNER_GID
+exec /path/to/circleci-runner "$@"
+```
+
+`/usr/local/share/nvkr-ca` holds `firmus-dev-issuing-ca.crt` and
+`firmus_root_ca.crt`. Then install the same pair where the host daemon looks
+for each Harbor name, and restart Docker:
+
+```sh
 sudo mkdir -p \
   /etc/docker/certs.d/harbor.cbr01.co \
   /etc/docker/certs.d/harbor.cbr01.in.firmus.co
-sudo cp /usr/local/share/ca-certificates/harbor-cbr01.crt \
-  /etc/docker/certs.d/harbor.cbr01.co/ca.crt
-sudo cp /usr/local/share/ca-certificates/harbor-cbr01.crt \
+cat /usr/local/share/ca-certificates/firmus_root_ca.crt \
+  /usr/local/share/ca-certificates/firmus-dev-issuing-ca.crt \
+  | sudo tee /etc/docker/certs.d/harbor.cbr01.co/ca.crt >/dev/null
+sudo cp /etc/docker/certs.d/harbor.cbr01.co/ca.crt \
   /etc/docker/certs.d/harbor.cbr01.in.firmus.co/ca.crt
 sudo systemctl restart docker
 ```
