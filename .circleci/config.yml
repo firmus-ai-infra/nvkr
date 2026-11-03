@@ -378,12 +378,6 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Build and upload qcow-imager.efi
-          no_output_timeout: 60m
-          command: |
-            set -euo pipefail
-            scripts/build-qcow-imager-efi.sh
-      - run:
           name: Admit the native KVM host
           command: |
             set -euo pipefail
