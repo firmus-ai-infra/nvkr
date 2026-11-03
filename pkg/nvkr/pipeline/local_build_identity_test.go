@@ -17,3 +17,22 @@ func TestLocalBuildUserArgsUsesInvokingIdentity(t *testing.T) {
 		t.Fatalf("local build identity arguments = %#v, want %#v", args, want)
 	}
 }
+
+func TestLocalBuildCacheArgsMatchVendorContainer(t *testing.T) {
+	mounts := localBuildCacheMountArgs()
+	wantMounts := []string{"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777"}
+	if !slices.Equal(mounts, wantMounts) {
+		t.Fatalf("local build cache mount = %#v, want %#v", mounts, wantMounts)
+	}
+	env := localBuildCacheEnvArgs()
+	wantEnv := []string{
+		"-e", "HOME=/tmp/home",
+		"-e", "TMPDIR=/tmp",
+		"-e", "GOCACHE=/tmp/go-build",
+		"-e", "GOPATH=/tmp/go",
+		"-e", "GOMODCACHE=/tmp/go/pkg/mod",
+	}
+	if !slices.Equal(env, wantEnv) {
+		t.Fatalf("local build cache environment = %#v, want %#v", env, wantEnv)
+	}
+}

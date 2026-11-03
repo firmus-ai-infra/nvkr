@@ -127,6 +127,10 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 		// from the caller's workspace. Docker otherwise defaults to root and
 		// leaves a checkout that the runner cannot delete before its next task.
 		args = append(args, localBuildUserArgs()...)
+		// A numeric host uid has no passwd entry, so Docker sets HOME=/.
+		// Go would then try to create /.cache/go-build. Give this build the
+		// same writable cache the vendor container uses.
+		args = append(args, localBuildCacheMountArgs()...)
 	}
 	// Run the toolchain on the build's target platform (model B): forces the native
 	// arch variant of a multi-arch toolchain — or emulation on a foreign host — so
@@ -152,6 +156,9 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 	}
 	for _, ev := range n.Env {
 		args = append(args, "-e", ev.Name+"="+ev.Value)
+	}
+	if buildKit == nil {
+		args = append(args, localBuildCacheEnvArgs()...)
 	}
 	if n.BuilderType == ir.BuilderBuildKit {
 		args = append(args, buildKitRuntimeArgs(opts.Runtime)...)
@@ -246,6 +253,20 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 
 func localBuildUserArgs() []string {
 	return []string{"--userns=host", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())}
+}
+
+func localBuildCacheMountArgs() []string {
+	return []string{"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777"}
+}
+
+func localBuildCacheEnvArgs() []string {
+	return []string{
+		"-e", "HOME=/tmp/home",
+		"-e", "TMPDIR=/tmp",
+		"-e", "GOCACHE=/tmp/go-build",
+		"-e", "GOPATH=/tmp/go",
+		"-e", "GOMODCACHE=/tmp/go/pkg/mod",
+	}
 }
 
 func buildMaterialMountArgs(root string) []string {
