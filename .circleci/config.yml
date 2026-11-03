@@ -55,7 +55,7 @@ parameters:
 executors:
   controller:
     machine: true
-    resource_class: firmus/nvke
+    resource_class: firmus/nvkr
     environment:
       GOTOOLCHAIN: local
       IMAGE_REGISTRY: harbor.cbr01.in.firmus.co/nvke
