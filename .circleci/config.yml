@@ -4,8 +4,9 @@
 # Customer-owned CircleCI config. NVKR does not generate this file.
 # This pipeline builds one artifact: the Ubuntu 24.04.5 ARM64 node QCOW2.
 # build_node_image starts that job. publish_node_image uploads the disk and
-# does not start a job by itself. The job refuses uid 0. Its last step deletes
-# the working directory on success and on failure. NVKR registry publication stays out.
+# does not start a job by itself. The job refuses uid 0. Its last step restores
+# owner write on its directories, then deletes the working directory on success
+# and on failure. NVKR registry publication stays out.
 version: 2.1
 
 parameters:
@@ -163,9 +164,15 @@ jobs:
               echo "refusing to clean the workspace as root" >&2
               exit 1
             fi
+            # Unlink needs owner write on the parent. Sealed directories are
+            # mode 0555 or 0500 and are still owned by this account. Restore
+            # owner rwx on those directories only. -type d does not follow
+            # symlinks or change file modes. Do not change ownership.
+            find "${PWD}" -xdev -user "${uid}" -group "${gid}" -type d \
+              -exec chmod u+rwx {} + || true
             # Delete only what this account owns. -delete implies -depth, so a
             # directory is removed after its owned children. A foreign entry
-            # stays behind and fails the check below. Do not change ownership.
+            # stays behind and fails the check below.
             find "${PWD}" -xdev -mindepth 1 -user "${uid}" -group "${gid}" -delete || true
             remaining="$(find "${PWD}" -xdev -mindepth 1 -print)"
             if [ -n "${remaining}" ]; then
