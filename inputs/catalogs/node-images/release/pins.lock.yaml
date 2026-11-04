@@ -12,10 +12,10 @@ artifacts:
 kind: PinLock
 pins:
   nvke-cni-calico-source:
-    commit: ed2f2b032d2849014ec112bb94162b10c8b5ff5c
-    sourceDateEpoch: 1793574019
-    tag: ed2f2b032d2849014ec112bb94162b10c8b5ff5c
-    treeHash: b27e7a912814d70b0f1102a93b34d9315ad94fe8
+    commit: 4a9b963c48c12372b73735af98cc752bc7e47c7e
+    sourceDateEpoch: 1793739589
+    tag: 4a9b963c48c12372b73735af98cc752bc7e47c7e
+    treeHash: 7726169c534bc4250ce4b2db651098e0c8b704ad
   nvke-kubeadm-distro-source:
     commit: 400c24fb6465b042be883d6b62472528520d6291
     sourceDateEpoch: 1792548398

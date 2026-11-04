@@ -390,6 +390,7 @@ jobs:
       S3_ENDPOINT: https://s3-console.cbr01.in.firmus.co/
       S3_BUCKET: nvke
       S3_PREFIX: nvke-node-image-ubuntu24-amd64
+      UBUNTU_SERIES: "24.04.5"
     steps:
       - checkout
       - run:
