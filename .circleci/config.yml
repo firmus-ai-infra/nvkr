@@ -193,6 +193,21 @@ commands:
               echo "no local image provides chown; root-owned workspace files cannot be reclaimed" >&2
               exit 1
             fi
+            if [ -f "${PWD}/.nvkr/preserve-workspace" ]; then
+              echo "boot smoke failed; leaving ${PWD} in place"
+              # A root-owned directory the runner cannot empty stops the task
+              # cleanup from removing the built disk. Reclaim would make that
+              # tree deletable, so this path does not chown the workspace.
+              docker run --rm --pull=never --network=none --read-only \
+                --userns=host \
+                --user 0:0 \
+                --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
+                --security-opt no-new-privileges \
+                --entrypoint sh \
+                -v "${PWD}:/work" \
+                "${image}" -c 'mkdir -p /work/.nvkr/preserve-root && chmod 755 /work/.nvkr/preserve-root && : > /work/.nvkr/preserve-root/keep && chmod 644 /work/.nvkr/preserve-root/keep'
+              exit 0
+            fi
             printf 'reclaiming workspace ownership with %s\n' "${image}"
             docker run --rm --pull=never --network=none --read-only \
               --userns=host \
@@ -458,6 +473,10 @@ jobs:
           no_output_timeout: 45m
           command: |
             set -euo pipefail
+            # A failed fetch or smoke leaves the built disk for inspection.
+            # Reclaim sees this marker and does not hand the tree back.
+            trap 'mkdir -p .nvkr; : > .nvkr/preserve-workspace; trap - ERR; exit 1' ERR
+            scripts/fetch-nvke-efi-src.sh
             scripts/boot-smoke-node-image.sh
       - when:
           condition: << pipeline.parameters.publish_node_image >>

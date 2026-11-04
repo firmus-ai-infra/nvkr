@@ -70,6 +70,9 @@ find /var/lib/circleci-runner/workdir/.nvkr -xdev -type d \
   \( ! -user RUNNER_ACCOUNT -o ! -group RUNNER_GROUP \) -print
 ```
 
-The command must produce no output after the job's reclamation step. This is
-local filesystem evidence only; it does not prove CircleCI scheduling or hosted
-runner lifecycle behavior.
+The command must produce no output after a successful job's reclamation step.
+A failed node-image boot smoke does not reclaim. It leaves
+`.nvkr/preserve-root` owned by root so the runner cannot delete that working
+directory. Remove that directory as root after copying the disk you need.
+This is local filesystem evidence only; it does not prove CircleCI scheduling
+or hosted runner lifecycle behavior.

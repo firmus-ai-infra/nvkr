@@ -8,8 +8,6 @@
 
 set -euo pipefail
 
-nvke_repo="https://github.com/firmus-ai-infra/nvke.git"
-nvke_commit="ed2f2b032d2849014ec112bb94162b10c8b5ff5c"
 efi_name="qcow-imager.efi"
 
 : "${S3_ENDPOINT:?S3_ENDPOINT is required}"
@@ -35,21 +33,12 @@ if [[ "${S3_BUCKET}" != "nvke" || "${S3_PREFIX}" != "nvke-node-image-ubuntu24-am
   exit 1
 fi
 
-command -v git >/dev/null 2>&1 || { echo "ERROR: git is required." >&2; exit 1; }
 command -v make >/dev/null 2>&1 || { echo "ERROR: make is required." >&2; exit 1; }
 command -v file >/dev/null 2>&1 || { echo "ERROR: file is required." >&2; exit 1; }
 command -v mc >/dev/null 2>&1 || { echo "ERROR: mc (minio client) not found." >&2; exit 1; }
 
+"$(dirname "${BASH_SOURCE[0]}")/fetch-nvke-efi-src.sh"
 src="${PWD}/.nvkr/nvke-efi-src"
-if [[ -e "${src}" ]]; then
-  echo "ERROR: ${src} already exists." >&2
-  exit 1
-fi
-mkdir -p "${src}"
-git -C "${src}" init -q
-git -C "${src}" remote add origin "${nvke_repo}"
-GIT_TERMINAL_PROMPT=0 git -C "${src}" fetch --depth 1 origin "${nvke_commit}"
-git -C "${src}" checkout -q --detach FETCH_HEAD
 
 # setup-host installs packages and changes host sysctls. The runner owner does
 # that once. This job only checks the prepared host and builds.
