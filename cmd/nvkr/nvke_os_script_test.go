@@ -486,6 +486,12 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					"CONTAINER_RUNTIME=docker", "NVKE_OS_ARCH="+arch, "NVKE_OS_UBUNTU_VERSION="+ubuntu, "NVKE_LOCAL_CLONE=",
 					"TEST_MACHINE="+machine, "TEST_RUNNER="+filepath.Join(root, "runner"), "TEST_RUN_RECORD="+record,
 					"NVKR_AUTHORING_TEST_HELPER=1", "NVKR_AUTHORING_TEST_EXE="+executable)
+				if strings.Contains(script, "harbor") {
+					// The launcher hands the host CA bundle to the toolchain BuildKit builder.
+					// A synthetic readable file stands in for the runner's bundle.
+					writeOSBootstrapFixture(t, root, "ca-bundle.crt", "synthetic CA bundle placeholder\n")
+					cmd.Env = append(cmd.Env, "NVKR_HARBOR_CA_BUNDLE="+filepath.Join(root, "ca-bundle.crt"))
+				}
 				if output, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("freezing selected recipe: %v\n%s", err, output)
 				}

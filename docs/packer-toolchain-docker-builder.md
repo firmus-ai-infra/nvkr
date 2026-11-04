@@ -44,30 +44,27 @@ To refresh the pin:
 
 `scripts/nvke-os-local-harbor.sh` pulls from the Harbor mirror rather than Docker Hub. For the toolchain build it:
 
-- sets `NVKR_PACKER_BUILDKIT_IMAGE` to `harbor.cbr01.in.firmus.co/dockerhub/` followed by the locked digest.
+- sets `NVKR_PACKER_BUILDKIT_IMAGE` to `harbor.cbr01.in.firmus.co/dockerhub/` followed by the locked digest;
+- requires the system CA bundle `/etc/ssl/certs/ca-certificates.crt` to be a readable file, and stops before the build if it is not;
+- writes a `buildkitd.toml` into the attempt's private temporary directory. It trusts that bundle for both `harbor.cbr01.in.firmus.co` and `harbor.cbr01.co`, and passes the file as `NVKR_BUILDKIT_CONFIG`.
 
-The launcher passes no CA to the builder. The host Docker daemon pulls the BuildKit image with its own trust settings. Inside the builder, BuildKit pulls the Ubuntu and curl base images from Harbor using the public CA bundle shipped in the BuildKit image. The build therefore depends on Harbor presenting a certificate from a publicly trusted CA. If Harbor moves to a private CA, BuildKit rejects its certificate and the build fails during the base image pull. `build.sh` still accepts `NVKR_BUILDKIT_CONFIG` for that case.
+Harbor's certificate comes from a private CA. The host's checks and the Docker daemon trust it because the CA is installed on the host, but the builder's container does not inherit host trust. Without the bundle, BuildKit uses only the public CAs in its image and the base image pull fails with `x509: certificate signed by unknown authority`. Buildx reads the bundle where `build.sh` runs and copies it into the builder.
+
+`NVKR_HARBOR_CA_BUNDLE` replaces the bundle path. The contract test uses it with a synthetic file. Do not set it on the runner.
 
 ### Before the next CircleCI run
 
-Run these checks on the runner host as the runner account.
+Run these checks on the runner as the runner account, in the environment where the job's commands run.
 
-Confirm that Harbor's certificate verifies against a public CA bundle. The pinned curl image carries only public CAs, so it does not see any private CA installed on the host:
-
-```sh
-docker run --rm \
-  harbor.cbr01.in.firmus.co/dockerhub/curlimages/curl@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40 \
-  -sS -o /dev/null -w '%{http_code}\n' https://harbor.cbr01.in.firmus.co/v2/
-```
-
-A `200` or `401` status means TLS succeeded. An error such as `SSL certificate problem` means Harbor's certificate is not publicly trusted.
-
-Show the chain Harbor presents and its expiry:
+Confirm that the system bundle trusts Harbor. Both hosts must report `Verify return code: 0 (ok)`:
 
 ```sh
-openssl s_client -connect harbor.cbr01.in.firmus.co:443 \
-  -servername harbor.cbr01.in.firmus.co </dev/null 2>/dev/null \
-  | openssl x509 -noout -subject -issuer -enddate
+for host in harbor.cbr01.in.firmus.co harbor.cbr01.co; do
+  printf '%s: ' "$host"
+  openssl s_client -connect "$host:443" -servername "$host" \
+    -CAfile /etc/ssl/certs/ca-certificates.crt -no-CApath -no-CAstore \
+    </dev/null 2>/dev/null | grep 'Verify return code'
+done
 ```
 
 Check Buildx and the BuildKit pull through Harbor:
@@ -77,15 +74,25 @@ docker buildx version
 docker pull harbor.cbr01.in.firmus.co/dockerhub/moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
 ```
 
-Optionally, create a builder with the same options as `build.sh`, then remove it:
+Reproduce the builder's base image pull with the same BuildKit configuration as the launcher, then remove the builder:
 
 ```sh
+cat >/tmp/nvkr-buildkitd.toml <<'EOF'
+[registry."harbor.cbr01.in.firmus.co"]
+  ca = ["/etc/ssl/certs/ca-certificates.crt"]
+
+[registry."harbor.cbr01.co"]
+  ca = ["/etc/ssl/certs/ca-certificates.crt"]
+EOF
 docker buildx create --name nvkr-packer-check --driver docker-container \
   --driver-opt image=harbor.cbr01.in.firmus.co/dockerhub/moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe \
-  --driver-opt restart-policy=no --bootstrap
-docker buildx inspect nvkr-packer-check
+  --driver-opt restart-policy=no --buildkitd-config /tmp/nvkr-buildkitd.toml --bootstrap
+printf 'FROM harbor.cbr01.in.firmus.co/dockerhub/library/ubuntu@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78\n' \
+  | docker buildx build --builder nvkr-packer-check -
 docker buildx rm --force nvkr-packer-check
 ```
+
+The build must resolve the Ubuntu image without an `x509` error. A warning that no output is specified is expected.
 
 ## Privileged BuildKit container
 
@@ -94,4 +101,4 @@ Buildx runs the `docker-container` driver's BuildKit privileged, and it has no o
 ## Verification status
 
 - `toolchains/nvkr-packer/build_test.go` covers the builder's creation flags, the pinned image, the config binding, ordering of create, build, and removal, creation failure, removal failure, and the rejection of invalid overrides. These tests use fake `docker` programs.
-- Not yet exercised: a real export on the CircleCI runner, a pull of the BuildKit digest through Harbor, and a Harbor-backed build that relies on Harbor's public certificate. Record those in the reconciliation ledger when they run.
+- Not yet exercised: a real export on the CircleCI runner, a pull of the BuildKit digest through Harbor, and a Harbor-backed build with the system CA bundle. Record those in the reconciliation ledger when they run.

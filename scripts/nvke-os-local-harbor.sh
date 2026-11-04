@@ -221,15 +221,35 @@ esac
 export NVKR_PACKER_BASE_IMAGE="${harbor_registry}/library/${packer_base}"
 export NVKR_PACKER_DOWNLOAD_IMAGE="${harbor_registry}/${packer_download}"
 # The toolchain build runs on a private Buildx container builder whose BuildKit
-# image comes through Harbor. BuildKit pulls the base images with its bundled
-# public CA store, which must trust Harbor's certificate.
+# image comes through Harbor. BuildKit pulls the base images with only its
+# bundled public CAs, so it gets the host bundle that includes the Harbor CA.
 packer_buildkit="$(jq -er '.buildkitImage' "${packer_lock}")"
 case "${packer_buildkit}" in
   moby/buildkit@sha256:*) ;;
   *) echo "packer lock BuildKit image is not the admitted builder pin" >&2; exit 1 ;;
 esac
+# NVKR_HARBOR_CA_BUNDLE exists for contract tests; the runner uses the default.
+# The path is written into a TOML string, so quotes and backslashes are rejected.
+harbor_ca_bundle="${NVKR_HARBOR_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+if [[ "${harbor_ca_bundle}" != /* || "${harbor_ca_bundle}" == *[\"\\]* ]]; then
+  echo "Harbor CA bundle must be an absolute path without quotes or backslashes: ${harbor_ca_bundle}" >&2
+  exit 1
+fi
+if [[ ! -f "${harbor_ca_bundle}" || ! -r "${harbor_ca_bundle}" ]]; then
+  echo "Harbor CA bundle for the toolchain BuildKit builder is missing or unreadable: ${harbor_ca_bundle}" >&2
+  exit 1
+fi
+buildkit_config="${TMPDIR}/buildkitd.toml"
+cat >"${buildkit_config}" <<EOF
+[registry."harbor.cbr01.in.firmus.co"]
+  ca = ["${harbor_ca_bundle}"]
+
+[registry."harbor.cbr01.co"]
+  ca = ["${harbor_ca_bundle}"]
+EOF
 
 toolchain_image="$(NVKR_PACKER_BUILDKIT_IMAGE="${harbor_registry}/${packer_buildkit}" \
+  NVKR_BUILDKIT_CONFIG="${buildkit_config}" \
   CONTAINER_RUNTIME="${runtime}" toolchains/nvkr-packer/build.sh \
   --arch "${arch}" --print-validated-image-id)"
 if [[ ! "${toolchain_image}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
