@@ -220,8 +220,17 @@ case "${packer_download}" in
 esac
 export NVKR_PACKER_BASE_IMAGE="${harbor_registry}/library/${packer_base}"
 export NVKR_PACKER_DOWNLOAD_IMAGE="${harbor_registry}/${packer_download}"
+# The toolchain build runs on a private Buildx container builder whose BuildKit
+# image comes through Harbor. BuildKit pulls the base images with its bundled
+# public CA store, which must trust Harbor's certificate.
+packer_buildkit="$(jq -er '.buildkitImage' "${packer_lock}")"
+case "${packer_buildkit}" in
+  moby/buildkit@sha256:*) ;;
+  *) echo "packer lock BuildKit image is not the admitted builder pin" >&2; exit 1 ;;
+esac
 
-toolchain_image="$(CONTAINER_RUNTIME="${runtime}" toolchains/nvkr-packer/build.sh \
+toolchain_image="$(NVKR_PACKER_BUILDKIT_IMAGE="${harbor_registry}/${packer_buildkit}" \
+  CONTAINER_RUNTIME="${runtime}" toolchains/nvkr-packer/build.sh \
   --arch "${arch}" --print-validated-image-id)"
 if [[ ! "${toolchain_image}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   echo "the native Docker build did not return an exact validated image ID" >&2

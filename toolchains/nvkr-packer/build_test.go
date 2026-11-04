@@ -82,6 +82,7 @@ func TestToolchainValidatedImageID(t *testing.T) {
 printf '%s\n' "$1 $2 $3" >>"$TEST_CALLS"
 case "$1 $2" in
   'buildx version'|'version --format') echo 'runtime diagnostic';;
+  'buildx create'|'buildx rm') exit 0;;
   'buildx build') printf 'archive\n'; exit "${TEST_BUILD_EXIT:-0}";;
   'image load') [ "$3" = --input ] && [ -f "$4" ] && [ -s "$4" ] || exit 96
     cat "$4" >/dev/null; echo 'load diagnostic';;
@@ -250,6 +251,191 @@ func TestToolchainRejectsBootstrapGoDriftBeforeRuntime(t *testing.T) {
 	}
 }
 
+// The private builder is created, used for the export only, and removed on every
+// exit path. Creation failure must stop before the build; removal failure after
+// a successful build must fail the whole invocation.
+func TestToolchainBuilderLifecycle(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("toolchain script requires jq")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("toolchain supports amd64 and arm64 hosts")
+	}
+	raw, err := os.ReadFile("toolchain.lock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lock struct {
+		BuildKitImage string `json:"buildkitImage"`
+	}
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(lock.BuildKitImage, "moby/buildkit@sha256:") {
+		t.Fatalf("locked BuildKit image is not a digest pin: %q", lock.BuildKitImage)
+	}
+	for _, tc := range []struct {
+		name                          string
+		buildExit, createExit, rmExit string
+		config                        bool
+		wantExit                      int
+		wantBuild, wantLoad           bool
+	}{
+		{name: "builder created, used, and removed", wantBuild: true, wantLoad: true},
+		{name: "config is handed to builder creation", config: true, wantBuild: true, wantLoad: true},
+		{name: "failed export removes builder and does not load", buildExit: "42", wantExit: 42, wantBuild: true},
+		{name: "builder creation failure stops before build", createExit: "45", wantExit: 45},
+		{name: "builder removal failure after success fails", rmExit: "46", wantExit: 1, wantBuild: true, wantLoad: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			here := toolchainFixtureDir(t, dir)
+			for _, name := range []string{"build.sh", "toolchain.lock.json"} {
+				data, err := os.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(here, name), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fake := filepath.Join(dir, "docker")
+			log := filepath.Join(dir, "calls")
+			const script = `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${TEST_CALLS}"
+case "$1 $2" in
+  "buildx version"|"version --format") exit 0 ;;
+  "buildx create") exit "${TEST_CREATE_EXIT:-0}" ;;
+  "buildx rm") exit "${TEST_RM_EXIT:-0}" ;;
+  "buildx build")
+    printf 'test-image-archive\n'
+    exit "${TEST_BUILD_EXIT:-0}" ;;
+  "image load") exit 0 ;;
+  "image inspect")
+    printf '[{"Id":"sha256:%064d","Os":"linux","Architecture":"%s","Config":{"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]}}]\n' 1 "${TEST_ARCH}" ;;
+  "run --rm") exit 0 ;;
+  *) echo "unexpected runtime command: $*" >&2; exit 99 ;;
+esac
+`
+			if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			config := filepath.Join(dir, "buildkitd.toml")
+			if tc.config {
+				if err := os.WriteFile(config, []byte("debug = false\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "bash", "build.sh", "--arch", runtime.GOARCH)
+			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
+				"TEST_BUILD_EXIT="+tc.buildExit, "TEST_CREATE_EXIT="+tc.createExit, "TEST_RM_EXIT="+tc.rmExit,
+				"TEST_ARCH="+runtime.GOARCH, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=",
+				"NVKR_PACKER_BUILDKIT_IMAGE=", "NVKR_BUILDKIT_CONFIG=", "TMPDIR="+dir)
+			if tc.config {
+				cmd.Env = append(cmd.Env, "NVKR_BUILDKIT_CONFIG="+config)
+			}
+			output, err := cmd.CombinedOutput()
+			got := 0
+			if err != nil {
+				var failure *exec.ExitError
+				if !errors.As(err, &failure) {
+					t.Fatal(err)
+				}
+				got = failure.ExitCode()
+			}
+			if got != tc.wantExit {
+				t.Fatalf("exit=%d want %d:\n%s", got, tc.wantExit, output)
+			}
+			if got != 0 && strings.Contains(string(output), "validated local toolchain") {
+				t.Fatalf("failed invocation reported validation:\n%s", output)
+			}
+			calls, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(calls)
+			create := strings.Index(text, "buildx create --name nvkr-packer-")
+			if create < 0 {
+				t.Fatalf("builder was not created:\n%s", text)
+			}
+			for _, want := range []string{"--driver docker-container", "--driver-opt restart-policy=no", "--bootstrap", "--driver-opt image=" + lock.BuildKitImage} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("builder creation lacks %q:\n%s", want, text)
+				}
+			}
+			if strings.Contains(" "+text+" ", " --use ") {
+				t.Fatalf("builder became the default for the host:\n%s", text)
+			}
+			if got := strings.Contains(text, "--buildkitd-config "+config); got != tc.config {
+				t.Fatalf("buildkitd config bound=%t want=%t:\n%s", got, tc.config, text)
+			}
+			build := strings.Index(text, "buildx build --builder nvkr-packer-")
+			if (build >= 0) != tc.wantBuild {
+				t.Fatalf("build reached=%t want=%t:\n%s", build >= 0, tc.wantBuild, text)
+			}
+			if build >= 0 && build < create {
+				t.Fatalf("build ran before builder creation:\n%s", text)
+			}
+			if loaded := strings.Contains(text, "image load --input "); loaded != tc.wantLoad {
+				t.Fatalf("archive load reached=%t want=%t:\n%s", loaded, tc.wantLoad, text)
+			}
+			remove := strings.LastIndex(text, "buildx rm --force nvkr-packer-")
+			if remove < 0 {
+				t.Fatalf("private builder was not removed on this exit path:\n%s", text)
+			}
+			if build >= 0 && remove < build {
+				t.Fatalf("builder removed before its build ran:\n%s", text)
+			}
+		})
+	}
+}
+
+// Override and config inputs are admitted before any runtime work, and each
+// rejection names the owning rule.
+func TestToolchainRejectsBuilderInputsBeforeRuntime(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("requires jq")
+	}
+	for _, tc := range []struct{ name, key, value, message string }{
+		{"tag-only builder override", "NVKR_PACKER_BUILDKIT_IMAGE", "moby/buildkit:buildx-stable-1", "must be a digest pin"},
+		{"foreign digest builder override", "NVKR_PACKER_BUILDKIT_IMAGE", "example.test/moby/buildkit@sha256:" + strings.Repeat("0", 64), "must be a digest pin"},
+		{"missing builder config", "NVKR_BUILDKIT_CONFIG", "{dir}/absent.toml", "BuildKit config is not a regular file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			here := toolchainFixtureDir(t, dir)
+			for _, name := range []string{"build.sh", "toolchain.lock.json"} {
+				data, err := os.ReadFile(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(here, name), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			marker := filepath.Join(dir, "called")
+			fake := filepath.Join(dir, "docker")
+			if err := os.WriteFile(fake, []byte("#!/bin/sh\ntouch \"$TEST_MARKER\"\nexit 99\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			value := strings.ReplaceAll(tc.value, "{dir}", dir)
+			cmd := exec.CommandContext(t.Context(), "bash", filepath.Join(here, "build.sh"), "--arch", runtime.GOARCH)
+			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker,
+				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_PACKER_BUILDKIT_IMAGE=", "NVKR_BUILDKIT_CONFIG=", tc.key+"="+value)
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), tc.message) {
+				t.Fatalf("got %v: %s", err, out)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("runtime reached before builder input admission: %v", err)
+			}
+		})
+	}
+}
+
 func TestToolchainDockerExportAndLoad(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("toolchain script requires jq")
@@ -282,7 +468,17 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${TEST_CALLS}"
 case "$1 $2" in
   "buildx version"|"version --format") exit 0 ;;
+  "buildx create")
+    [[ " $* " == *" --driver docker-container "* ]]
+    [[ " $* " == *" --driver-opt restart-policy=no "* ]]
+    [[ " $* " == *" --bootstrap "* ]]
+    [[ " $* " == *" --driver-opt image=moby/buildkit@sha256:"* ]]
+    exit "${TEST_CREATE_EXIT:-0}" ;;
+  "buildx rm")
+    [[ " $* " == *" --force nvkr-packer-"* ]]
+    exit "${TEST_RM_EXIT:-0}" ;;
   "buildx build")
+    [[ " $* " == *" --builder nvkr-packer-"* ]]
     [[ " $* " == *" --output type=docker,dest=-,rewrite-timestamp=true "* ]]
     [[ " $* " == *" --build-arg SOURCE_DATE_EPOCH=0 "* ]]
     if [[ "${TEST_EMPTY_ARCHIVE}" != true ]]; then printf 'test-image-archive\n'; fi
@@ -467,6 +663,7 @@ func TestDiagnosticToolchainPinDoesNotGrantMaintainedAcceptance(t *testing.T) {
 printf '%s\n' "$*" >>"$TEST_CALLS"
 case "$1 $2" in
   'buildx version'|'version --format') exit 0 ;;
+  'buildx create'|'buildx rm') exit 0 ;;
   'buildx build') printf 'archive\n' ;;
   'image load') [ "$3" = --input ] && [ -f "$4" ] && [ -s "$4" ] || exit 96 ;;
   'image inspect')

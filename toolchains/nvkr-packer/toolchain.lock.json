@@ -3,6 +3,7 @@
   "ubuntuSnapshot": "20260920T000000Z",
   "baseImage": "ubuntu@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78",
   "downloadImage": "curlimages/curl@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40",
+  "buildkitImage": "moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe",
   "validatedNVKE": {
     "commit": "726f76944404e1106626b8333d3576bdf67b575b",
     "goVersion": "1.27.1",
