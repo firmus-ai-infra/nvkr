@@ -37,6 +37,14 @@ intended work; it does not establish that the step succeeded.
 
 ## Generate and check the bundle
 
+For one Definition whose generated workflow is too large, the Environment can select
+`githubExecutionPartitions: true`. Generation then emits an entry workflow and bounded sibling workers;
+all belong to one generated manifest, use one complete Plan and feed one Run finalizer and Release.
+Jobs requiring an OIDC token stay in the entry workflow to preserve their signing identity policy.
+Do not edit or dispatch workers independently. The default remains the flat workflow. The maintained
+release and development Environments select this topology. It has local generation contracts and a hosted
+development Run; hosted release execution, including failure and cancellation reporting, is unrecorded.
+
 ```sh
 mkdir "$NVKR_PIPELINE_DIR/generated"
 bin/nvkr run generate \
@@ -168,7 +176,7 @@ for storage, toolchain and release packages. Previously retained Actions artifac
 old workflow refs also require separate handling; this change does not migrate or delete historical payloads.
 Compiled-output caches and CodeQL database uploads are disabled. Candidate OS builds retain private files
 only for the exact trusted workflow commit, so arbitrary candidate code cannot access a later storage writer.
-The nightly coordinator attaches its constructed cycle summary; raw suite report files are not public artifacts.
+The maintained hosted AMD64 nightly uploads no attachments; product bytes and raw deployment captures stay on its disposable runner.
 
 Generated workflows admit at most 2,000 record uploads per attempt, including conditional diagnostic and
 finalization uploads. The helper looks up exact selected names and fetches their record ZIPs serially,
@@ -199,7 +207,7 @@ generated producer would attempt to repair.
 The operator-trusted ARC policy explicitly accepts this bootstrap: changing a host-backed/shared device
 to mode 0666 can affect access outside the runner job. It does not establish SLSA Build L3 isolation or
 upgrade the evidence lane. Provisioning the correct numeric device group on runners avoids the mutation.
-The generated bootstrap has not yet completed a real full build; see [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md)
+The generated bootstrap has not yet completed a real full build; see [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/README.md)
 for the separately observed NVKE bootstrap and the remaining NVKR acceptance evidence.
 
 The per-output pipeline gives each remaining payload transfer a specific purpose:
@@ -269,8 +277,8 @@ bundle and the downstream nightly E2E adapter. They add no generated cron or
 general callable producer interface.
 Current qualification policy admission selects the default producer workflow,
 `.github/workflows/nvkr-run.yml`; named-producer qualification is not an admitted
-configuration. The named nightly producers instead use the separate downstream
-E2E adapter.
+configuration. No maintained nightly dispatches the named nightly producers; the separate
+downstream AMD64 E2E adapter builds its inputs locally.
 
 Read the top-level workflow to review which jobs can run, their dependency order, permissions, protected
 Environments and time limits. Follow a job's local `uses: ./.github/nvkr-run/actions/...` reference to inspect

@@ -57,9 +57,9 @@ func TestNVKEUbuntu24NativeDiskSelections(t *testing.T) {
 				if variant.output == "fde" {
 					root = "nvke-node-fde-" + tc.arch
 				}
-				wantComponents := []string{"nvke-agent", "nvke-cni-calico", "nvke-cni-ovn", "nvke-image-inputs", "nvke-kubeadm-distro",
+				wantComponents := []string{"nvke-agent", "nvke-cni-calico", "nvke-cni-ovn", "nvke-doca-ovs", "nvke-image-inputs", "nvke-kubeadm-distro",
 					root, tc.patched, "nvke-spire-agent", "ovn-kube-ubuntu", "ovn-kubernetes-chart", tc.installer}
-				if build.Platform != "linux/"+tc.arch || !slices.Equal(build.Components, wantComponents) || len(build.ResolvedComponents) != 11 {
+				if build.Platform != "linux/"+tc.arch || !slices.Equal(build.Components, wantComponents) || len(build.ResolvedComponents) != 12 {
 					t.Fatalf("unexpected native material closure: %s / %v", build.Platform, build.Components)
 				}
 				if build.BuildDigest == original.BuildDigest || identities[build.BuildDigest] {
@@ -80,25 +80,8 @@ func TestNVKEUbuntu24NativeDiskSelections(t *testing.T) {
 						packer.Variables["ubuntu_series"] = "26.04"
 						producer.Packer = &packer
 					}
-					if component == "nvke-node-image-amd64" {
-						if len(producer.Patches) != 1 {
-							t.Fatalf("AMD64 Ubuntu 24 disk patches = %+v, want one UEFI fallback", producer.Patches)
-						}
-						patch := producer.Patches[0]
-						if patch.Name != "uefi-shell-fallback-amd64.patch" ||
-							patch.SHA256 != "sha256:c1a9092fe54a045fedbc3094d233373d0e4d3e10105c0e19db20d5ee94b51f36" ||
-							patch.SHA256 != fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(patch.Content))) ||
-							!strings.Contains(patch.Content, "startup.nsh") ||
-							!strings.Contains(patch.Content, "BOOTX64.EFI") ||
-							strings.Contains(patch.Content, "BOOTAA64.EFI") {
-							t.Fatalf("AMD64 Ubuntu 24 UEFI fallback patch = %+v", patch)
-						}
-						producer.Patches = nil
-					} else if len(producer.Patches) != 0 {
-						t.Fatalf("Ubuntu 24 producer %s unexpectedly carries patches: %+v", component, producer.Patches)
-					}
-					if component != "nvke-agent" && component != "ubuntu-installer-iso" && component != "ubuntu-installer-iso-amd64" &&
-						component != "nvke-node-image-amd64" &&
+					// The agent and DOCA OVS packages are Ubuntu-series specific.
+					if component != "nvke-agent" && component != "nvke-doca-ovs" && component != "ubuntu-installer-iso" && component != "ubuntu-installer-iso-amd64" &&
 						!reflect.DeepEqual(producer, original.CatalogSnapshot.Components[component]) {
 						t.Fatalf("Ubuntu selection unexpectedly changed unrelated producer %s", component)
 					}
@@ -307,7 +290,7 @@ func TestNVKEUbuntu24LocalDiskSelections(t *testing.T) {
 			if build.BuildDigest != nvkeUbuntu24Build(t, hosted, build.Name).BuildDigest {
 				t.Fatal("local and hosted Ubuntu 24 selections must retain identical logical Build inputs")
 			}
-			if build.Platform != "linux/"+arch || len(build.Components) != 11 {
+			if build.Platform != "linux/"+arch || len(build.Components) != 12 {
 				t.Fatalf("local native closure = %s / %v", build.Platform, build.Components)
 			}
 			for _, node := range build.Graph.Nodes {

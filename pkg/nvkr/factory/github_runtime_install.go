@@ -27,11 +27,7 @@ func InstallGitHubRuntimeInputs(ctx context.Context, baseline *Plan, root string
 	if err := admitGitHubRuntimeInputs(ctx, baseline, root); err != nil {
 		return err
 	}
-	committed, err := RenderGitHub(ctx, baseline)
-	if err != nil {
-		return err
-	}
-	if err := CheckGeneratedBundle(ctx, root, committed); err != nil {
+	if _, err := checkCoreGitHubBundle(ctx, baseline, root); err != nil {
 		return err
 	}
 	staged, err := readGitHubRuntimeInputSet(ctx, root)
@@ -44,6 +40,9 @@ func InstallGitHubRuntimeInputs(ctx context.Context, baseline *Plan, root string
 	}
 	if err := admitGitHubRuntimeInputs(ctx, &fresh, root); err != nil {
 		return err
+	}
+	if fresh.Environment.GitHubRuntimeSource != nil && fresh.RuntimeSourceCommit == "" {
+		return e.New(e.CodeUnpinnedSource, "staged runtime source inputs omit the frozen commit")
 	}
 	if fresh.EnvironmentDigest != baseline.EnvironmentDigest || fresh.DefinitionPath != baseline.DefinitionPath || fresh.EnvironmentPath != baseline.EnvironmentPath {
 		return e.New(e.CodePipelineDrift, "staged runtime inputs change the selected namespace, Environment or authored paths")

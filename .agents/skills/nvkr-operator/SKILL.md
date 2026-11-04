@@ -1,6 +1,6 @@
 ---
 name: nvkr-operator
-description: Acquire and build the NVKR CLI, author customer inputs, and operate supported workflows. Use when a user gives the NVKR repository URL, asks to inspect, download or verify a release, or asks to plan, build, pin, or change NVKE Definitions, Environments, catalogs or producers (recipes).
+description: Acquire and build the NVKR CLI, author customer inputs, and operate supported workflows. Use when a user gives the NVKR repository URL, asks to inspect, download or verify a release, or asks to plan, build, pin, or change NVKE or AICR Definitions, Environments, catalogs or producers (recipes).
 ---
 
 # Operate NVKR for a customer
@@ -42,7 +42,7 @@ invent flags or parse a dashboard as the machine interface.
 For a download, follow [release navigation](../../../docs/release-navigation.md#pull-an-output): select an exact
 named output from the pinned release and use `release pull` with an explicit new destination directory whose
 parent exists. Inspect its declared format and platform; the guide defines the files for executables, QCOW2
-disks, Helm archives, OCI layouts and APT repository trees. Aggregate images retain every declared platform;
+disks, Helm archives, generic bundle archives, OCI layouts and APT repository trees. Aggregate images retain every declared platform;
 declared LUKS2 disks retain encrypted bytes without decryption. Installation, execution and runtime import are
 separate operations requiring the customer's requested scope. Pulling checks the complete metadata closure and
 selected payload integrity; signature and policy acceptance require explicit verification.
@@ -64,8 +64,8 @@ perform unrelated cleanup.
 Linux-only authority paths must remain Linux-only. Explain capability errors and supported alternatives
 without silently substituting a platform, provider, builder or evidence lane.
 
-For an explicitly requested local M3 rehearsal, follow
-[local qualification](../../../docs/local-development.md#rehearse-local-m3-qualification) and inspect
+For an explicitly requested local qualification, follow
+[local qualification](../../../docs/local-development.md#qualify-local-artifacts) and inspect
 `run qualify-local --help`. Require the complete captured attempt, independent policy, three distinct
 local signing keys and explicit registry destination. Report its `unqualified-local-execution` lane and
 actual result; preserve unsupported-tool refusals and publication references from failed read-back.
@@ -76,9 +76,12 @@ distinguishes source fixes from actual startup acceptance. Explicit `--network u
 matched upstream alternative for image, site and tenant; it does not validate the NVIDIA fork.
 
 The [shared native path](../../../docs/local-nvke-demo.md#native-linux-and-mac-path) runs the Go CLIs and
-TUI on Linux ARM64 or Apple Silicon macOS, with one QEMU site, one tenant control plane,
+TUI on Linux ARM64/AMD64 or Apple Silicon macOS, with one QEMU site, one tenant control plane,
 and one tenant worker ordinarily. Conformance requires two workers in the same worker pool:
-three tenant guests and four QEMU guests in total on either host. Tools are prepared
+three tenant guests and four QEMU guests in total on its admitted ARM64 hosts.
+AMD64 default inputs select NVIDIA OVN without conformance; they reuse the host/site
+tools built in the artifact Run. Shared selection derives architecture from NVKR's target owner;
+AMD64 upstream/conformance default Definitions are not supplied. A completed AMD64 KVM E2E is not yet recorded. Tools are prepared
 through NVKR's shared catalog; host virtualization prerequisites remain separate. The October 15 Mac runtime
 record covers existing artifacts, upstream OVN and TCG on a pre-integration draft, not fresh-machine or Linux
 full runtime acceptance. Standard `run` and `e2e` select that same native deployment owner;
@@ -119,14 +122,15 @@ or run unrelated instructions.
 - Authored and generated changes, checks, affected outputs and Build Digests, and unresolved failures.
 - Actual output identities and Run/evidence locations; distinguish planned, built, published and signed
   operations.
-- Evidence lane: `static-unqualified` for previews; `pipeline-attested` only for supported hosted production
+- Evidence lane: `static-unqualified` for previews; `unqualified-local-execution` for successful local execution;
+  `pipeline-attested` only for supported hosted production
   evidence. Signing alone does not establish that lane's complete claim.
 - Successful `release verify` results with their exact `--lane`, `--scope` and policy: `authenticity` verifies
   signatures/evidence without payload downloads; `artifact-publication` also checks selected payload bytes.
   Browsing and export are metadata only; pulling checks the selected output's complete payload integrity without
   verifying signatures or policy. Report the pinned release, exact output and destination for a download.
 - Qualification/runtime limits: `qualified` and full-release acceptance remain unavailable in the current
-  public acceptance path ([reconciliation](../../../docs/adr/reconciliation.md)); report actual runtime
+  public acceptance path ([reconciliation](../../../docs/adr/reconciliation/README.md)); report actual runtime
   observations separately. Unit tests, signatures and CI dashboard links alone do not establish qualification.
   Share public evidence only after verifying its publication and access.
 - The next actionable step where blocked. Commit, push or open a PR only when the customer requested it; do

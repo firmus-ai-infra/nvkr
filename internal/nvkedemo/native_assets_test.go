@@ -132,53 +132,78 @@ func TestNativeAssetsCanceledBeforeInputIO(t *testing.T) {
 	}
 }
 
-func TestNativeAcquiredImageRequiresSelectedSourceAndChild(t *testing.T) {
-	for _, role := range []string{"workload", "capi-exec-init", "capi-exec-plugin"} {
-		for _, scenario := range []string{"selected", "updated source", "wrong source", "wrong repository", "wrong epoch", "wrong child", "wrong parent", "wrong build", "wrong platform", "missing producer", "duplicate producer"} {
-			t.Run(role+"/"+scenario, func(t *testing.T) {
-				installer := &nativeInstallerSelection{repo: "https://example.invalid/nvke.git", commit: strings.Repeat("a", 40), sourceDate: 1}
-				if scenario == "updated source" {
-					installer.commit, installer.sourceDate = strings.Repeat("b", 40), 2
-				}
-				parent, child := "sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64)
-				if scenario == "updated source" {
-					parent, child = "sha256:"+strings.Repeat("e", 64), "sha256:"+strings.Repeat("f", 64)
-				}
-				component := catalog.Component{Repo: installer.repo, Commit: installer.commit, SourceDate: installer.sourceDate, Prebuilt: &catalog.Prebuilt{
-					Image: "example.invalid/" + role + "@" + parent, ImageParentDigest: parent, Digests: map[string]string{"arm64": child},
-				}}
-				selected := nativeImageSelection{role: role, output: role + "-image-arm64", observed: lifecycle.Artifact{Digest: child, BuildDigest: "build"}}
-				build := factory.BuildPlan{Name: selected.output, Platform: "linux/arm64", BuildDigest: selected.observed.BuildDigest}
+func TestNativeOutputPlatformUsesExactReplayedBuild(t *testing.T) {
+	for _, arch := range []string{"arm64", "amd64"} {
+		for _, scenario := range []string{"selected", "sibling name", "wrong build", "wrong components", "foreign platform"} {
+			t.Run(arch+"/"+scenario, func(t *testing.T) {
+				output := lifecycle.Artifact{Name: "selected", BuildDigest: "build", Components: []string{"component"}}
+				build := factory.BuildPlan{Name: output.Name, BuildDigest: output.BuildDigest, Components: output.Components, Platform: "linux/" + arch}
 				switch scenario {
-				case "wrong source":
-					component.Commit = strings.Repeat("f", 40)
-				case "wrong repository":
-					component.Repo = "https://example.invalid/other.git"
-				case "wrong epoch":
-					component.SourceDate++
-				case "wrong child":
-					selected.observed.Digest = parent
-				case "wrong parent":
-					component.Prebuilt.ImageParentDigest = child
+				case "sibling name":
+					build.Name = "sibling"
 				case "wrong build":
 					build.BuildDigest = "other"
-				case "wrong platform":
-					build.Platform = "linux/amd64"
+				case "wrong components":
+					build.Components = []string{"other"}
+				case "foreign platform":
+					build.Platform = "darwin/" + arch
 				}
-				name := "native-" + role + "-image"
-				if scenario == "missing producer" {
-					name = "unselected"
-				}
-				build.ResolvedComponents = []catalog.NamedComponent{{Name: name, Component: component}}
-				if scenario == "duplicate producer" {
-					build.ResolvedComponents = append(build.ResolvedComponents, build.ResolvedComponents[0])
-				}
-				ref, err := nativeAcquiredImage(&factory.Plan{Builds: []factory.BuildPlan{build}}, selected, installer)
-				accepted := scenario == "selected" || scenario == "updated source"
-				if (err == nil) != accepted || accepted && ref.String() != component.Prebuilt.Image {
-					t.Fatalf("source/child selection: ref=%s err=%v", ref, err)
+				err := nativeOutputPlatform(&factory.Plan{Builds: []factory.BuildPlan{build}}, output, "linux/"+arch)
+				if scenario == "selected" {
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					assertNightlyCode(t, err, nvkrerr.CodeVerifyFailed)
 				}
 			})
+		}
+	}
+}
+
+func TestNativeAcquiredImageRequiresSelectedNativeChild(t *testing.T) {
+	for _, role := range []string{"workload", "capi-exec-init", "capi-exec-plugin"} {
+		for _, arch := range []string{"arm64", "amd64"} {
+			for _, scenario := range []string{"selected", "independent source", "source build", "wrong child", "wrong parent", "wrong build", "wrong platform", "missing producer", "duplicate producer"} {
+				t.Run(role+"/"+arch+"/"+scenario, func(t *testing.T) {
+					installer := &nativeInstallerSelection{repo: "https://example.invalid/nvke.git", commit: strings.Repeat("a", 40), sourceDate: 1}
+					parent, child := "sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64)
+					component := catalog.Component{Repo: installer.repo, Commit: installer.commit, SourceDate: installer.sourceDate, Prebuilt: &catalog.Prebuilt{
+						Image: "example.invalid/" + role + "@" + parent, ImageParentDigest: parent, Digests: map[string]string{arch: child},
+					}}
+					selected := nativeImageSelection{role: role, output: role + "-image-" + arch, platform: "linux/" + arch, observed: lifecycle.Artifact{Digest: child, BuildDigest: "build"}}
+					build := factory.BuildPlan{Name: selected.output, Platform: "linux/" + arch, BuildDigest: selected.observed.BuildDigest}
+					switch scenario {
+					case "independent source":
+						component.Commit = strings.Repeat("f", 40)
+						component.Repo = "https://example.invalid/other.git"
+						component.SourceDate++
+					case "source build":
+						component.FromSource = true
+					case "wrong child":
+						selected.observed.Digest = parent
+					case "wrong parent":
+						component.Prebuilt.ImageParentDigest = child
+					case "wrong build":
+						build.BuildDigest = "other"
+					case "wrong platform":
+						build.Platform = "linux/" + map[string]string{"arm64": "amd64", "amd64": "arm64"}[arch]
+					}
+					name := "native-" + role + "-image"
+					if scenario == "missing producer" {
+						name = "unselected"
+					}
+					build.ResolvedComponents = []catalog.NamedComponent{{Name: name, Component: component}}
+					if scenario == "duplicate producer" {
+						build.ResolvedComponents = append(build.ResolvedComponents, build.ResolvedComponents[0])
+					}
+					ref, err := nativeAcquiredImage(&factory.Plan{Builds: []factory.BuildPlan{build}}, selected)
+					accepted := scenario == "selected" || scenario == "independent source"
+					if (err == nil) != accepted || accepted && ref.String() != component.Prebuilt.Image {
+						t.Fatalf("source/child selection: ref=%s err=%v", ref, err)
+					}
+				})
+			}
 		}
 	}
 }
@@ -280,9 +305,23 @@ func TestNativeCAPNICoReferenceFollowsSelectedInstaller(t *testing.T) {
 			if tc.canceled {
 				cancel()
 			}
-			got, err := nativeCAPNICoReference(ctx, root)
+			assets := NativeAssets{Installer: root}
+			got, err := assets.prepareCAPNICoImport(ctx)
 			if (err != nil) != tc.fail || !tc.fail && got != tc.image {
 				t.Fatalf("selected source alias=%q error=%v", got, err)
+			}
+			if tc.fail {
+				if len(assets.importTags) != 0 {
+					t.Fatal("failed source admission retained an import alias")
+				}
+			} else {
+				cfg := startupDescription()
+				cfg.ImageImports["capnico"] = strings.Split(tc.image, ":")[0] + "@sha256:" + strings.Repeat("a", 64)
+				cfg.imageTags = assets.importTags
+				startup, err := SiteStartupUserData(startupTestContext(t), cfg)
+				if err != nil || !strings.Contains(startup, "images tag --force") || !strings.Contains(startup, tc.image) {
+					t.Fatalf("prepared source alias did not reach startup: %v", err)
+				}
 			}
 			if tc.canceled && !errors.Is(err, context.Canceled) {
 				t.Fatal("source projection lost cancellation", err)
@@ -323,7 +362,7 @@ func TestNativeInstallerRejectsMissingOrChangedCAPISelectionAtExtraction(t *test
 				{"deploy/nvke-deploy.sh", tar.TypeReg, "installer", 0},
 				{"deploy/lib/nvke-deploy-items.py", tar.TypeReg, "items", 0},
 				{"deploy/lib/render-template.py", tar.TypeReg, "renderer", 0},
-				{"controller/deploy/charts/controller/Chart.yaml", tar.TypeReg, "controller chart", 0},
+				{"controller/deploy/charts/controller/Chart.yaml", tar.TypeReg, "name: nvke-controller\n", 0},
 				{"nktp/deploy/charts/nktp/Chart.yaml", tar.TypeReg, "nktp chart", 0},
 				{"controller/deploy/k8s/capi-spiffe-exec-auth/capi-controller-manager.yaml", tar.TypeReg, "capi overlay", 0},
 				{"controller/test/fixtures/releases/nvke-nico-vms-24.04-arm64-fde-machineimage.yaml", tar.TypeReg, "machineimage", 0},
@@ -332,6 +371,11 @@ func TestNativeInstallerRejectsMissingOrChangedCAPISelectionAtExtraction(t *test
 				{"deploy/nico/nvke-deploy.yaml", tar.TypeReg, "deployment", 0},
 				{"controller/nico-sim/internal/seed/default-seed.yaml", tar.TypeReg, "seed", 0},
 				{"controller/nico-sim/ui/index.html", tar.TypeReg, "index", 0},
+			}
+			for index, raw := range nativeControllerFixtureFiles("nke-controller") {
+				if index < 3 {
+					entries = append(entries, assetEntry{nativeControllerSourceFiles[index], tar.TypeReg, raw, 0})
+				}
 			}
 			if scenario != "missing site specification" {
 				entries = append(entries, assetEntry{nativeSiteSpecPath, tar.TypeReg, nativeInstallerSiteSpecFixture, 0})
@@ -362,9 +406,12 @@ func TestNativeInstallerRejectsMissingOrChangedCAPISelectionAtExtraction(t *test
 				cancel()
 			}
 			before := *selected
-			_, err := extractNativeInstaller(ctx, writeAssetArchive(t, entries), privateTestDir(t), selected)
+			extracted, err := extractNativeInstaller(ctx, writeAssetArchive(t, entries), privateTestDir(t), selected)
 			if (err == nil) != (scenario == "complete") {
 				t.Fatalf("unexpected extraction admission: %v", err)
+			}
+			if scenario == "complete" && (extracted == nil || extracted.controller.name != "nke-controller" || extracted.controller.digests == [4]string{}) {
+				t.Fatal("valid extraction lost source controller selection")
 			}
 			if *selected != before {
 				t.Fatal("extraction mutated the caller's checked selection")

@@ -5,6 +5,7 @@ package factory
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +25,18 @@ type localProducerTransform func(authored.DefinitionOutput, string, catalog.Comp
 // authored catalog, source pin, producer material or public lifecycle object.
 func prepareLocalInputs(ctx context.Context, definitionPath, environmentPath, out string, files map[string]any,
 	configure func(*authored.Environment, string) error, transform localProducerTransform,
+) (preparedLocalInputs, error) {
+	return prepareLocalInputsWithScope(ctx, definitionPath, environmentPath, out, files, configure, transform, false,
+		func(ctx context.Context, selection authored.Catalog) (*catalog.Stack, error) {
+			return loadFactoryCatalogStack(ctx, definitionPath, selection)
+		})
+}
+
+// Exact source preparation transforms a complete catalog consistently across
+// sibling outputs. Native toolchain preparations retain selected-component scope.
+func prepareLocalInputsWithScope(ctx context.Context, definitionPath, environmentPath, out string, files map[string]any,
+	configure func(*authored.Environment, string) error, transform localProducerTransform, wholeCatalog bool,
+	loadStack func(context.Context, authored.Catalog) (*catalog.Stack, error),
 ) (preparedLocalInputs, error) {
 	if filepath.IsAbs(out) || filepath.Clean(out) != out || !strings.HasPrefix(out, ".nvkr/") || strings.ContainsAny(out, "\r\n\x00") {
 		return preparedLocalInputs{}, e.New(e.CodeUsage, "local input preparation requires a fresh repository-relative .nvkr directory")
@@ -90,13 +103,17 @@ func prepareLocalInputs(ctx context.Context, definitionPath, environmentPath, ou
 		if err != nil {
 			return preparedLocalInputs{}, err
 		}
-		stack, err := loadFactoryCatalogStack(ctx, definitionPath, selection)
+		stack, err := loadStack(ctx, selection)
 		if err != nil {
 			return preparedLocalInputs{}, err
 		}
 		selection = rebased
 		overlay := catalog.Overlay{APIVersion: catalog.OverlayAPIVersion, Kind: catalog.OverlayKind, Name: "local-native-" + output.Name, RequiresCatalogDigest: stack.Digest, Components: make(map[string]catalog.ComponentReplacement)}
-		for _, name := range output.Components {
+		names := output.Components
+		if wholeCatalog {
+			names = slices.Sorted(maps.Keys(stack.Catalog.Components))
+		}
+		for _, name := range names {
 			component, ok := stack.Catalog.Components[name]
 			if !ok {
 				return preparedLocalInputs{}, e.New(e.CodeInvalidCatalog, "missing selected component %q", name)
@@ -132,6 +149,9 @@ func prepareLocalInputs(ctx context.Context, definitionPath, environmentPath, ou
 			if output.Catalog != nil && slices.Equal(selection.Overlays, output.Catalog.Overlays) && selection.Base == output.Catalog.Base {
 				return stacks[output.Name], nil
 			}
+		}
+		if selection.Base == definition.Catalog.Base && slices.Equal(selection.Overlays, definition.Catalog.Overlays) {
+			return loadStack(ctx, baseSelection)
 		}
 		return loadFactoryCatalogStack(ctx, prepared.Definition, selection)
 	})

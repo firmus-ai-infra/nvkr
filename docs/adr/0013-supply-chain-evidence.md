@@ -1,9 +1,9 @@
 # ADR-13 — Supply-chain evidence: SBOM, external references, vulnerability
 
 - **Decision status:** Proposed (implementation-aligned draft; pending named-decider ratification)
-- **Implementation maturity:** Tracked separately in `reconciliation.md`; implementation and test evidence do not
+- **Implementation maturity:** Tracked separately in `reconciliation/README.md`; implementation and test evidence do not
   constitute governance ratification.
-- **Acceptance-test maturity:** Tracked separately in `reconciliation.md`; green unit tests alone do not
+- **Acceptance-test maturity:** Tracked separately in `reconciliation/README.md`; green unit tests alone do not
   establish end-to-end conformance.
 - **Deciders:** [INPUT NEEDED — author + reviewers]
 - **Index:** ADR-13 in the consolidated NVKR ADR set.
@@ -64,6 +64,28 @@ exact identity, and the URL need not embed it. The referenced bytes **must hash 
 closed**. Where no upstream evidence exists, the component declares an explicit **`evidence: none`** — never a
 silent absence. That is **distinct from a Tier-4 exclusion** (`fromSource:false` plus a reason). One owning
 schema defines the reference, consumed by both the acquire lane and the SBOM emitter.
+
+A reference may also be `archive:<member>`: a regular companion member of a release executable's pinned
+archive, read only after the archive bytes hash to the source pin's archive digest. The member must differ
+from the executable, and its own declared digest is still checked. The archive transport shares the 256 MiB
+source-tool carrier bound; a directly referenced document and an extracted member stay within 64 MiB.
+
+Upstream evidence is validated, never merged or converted. NVKR records only the reference and digest beside its
+own CycloneDX document; it has no reason to require CycloneDX input. The SBOM may be CycloneDX 1.4–1.6 JSON or
+SPDX 2.3 JSON. An SPDX document must describe exactly one element whose name is the subject and which carries
+exactly one SHA256 checksum equal to the artifact digest. SPDX 3.0, SPDX tag-value and other formats fail
+closed. Provenance is an in-toto Statement v0.1 or v1 with an SLSA provenance v1 predicate and exactly one
+subject with that name and digest. The subject name is the release executable's file name for a release
+executable, otherwise the component name.
+
+Provenance may be an unsigned digest-pinned statement or a Sigstore v0.3 DSSE bundle. A bundle requires a
+declared keyless signer policy, an exact OIDC issuer and certificate identity, whose identity is rendered from
+the source pin (for example `…/on-tag.yaml@refs/tags/{{.Tag}}`). NVKR checks the statement subject first, then
+a digest-pinned cosign verifies the signature, identity, issuer and transparency evidence against the
+public-good Sigstore trust root. A bundle without a policy, a policy over an unsigned statement, a wrong signer
+and an unavailable verifier all fail closed. A digest-pinned trusted root for offline or air-gapped verification
+is a follow-up. The SBOM is trusted through its digest pin and subject check; an upstream signature over the
+SBOM file is not consumed.
 
 `evidence: none` is an honest statement about an acquisition. It is **not evidence and never satisfies an
 evidence-required promotion gate**. If release policy permits a missing evidence class, the exception is an
@@ -139,10 +161,16 @@ catalog. Adding those declarations or outputs changes canonical plan identity an
 The internal index uses `nvkr.dev/sbom-index/v2`; generated CycloneDX properties bind `nvkr:buildDigest`.
 Replacing the former Recipe binding changes document identity; old evidence is not silently translated.
 
+A generic `bundle-oci` output always receives the internal `bundle-files/v1` inventory defined by
+[ADR-25](0025-generic-oci-bundles-and-aicr-producers.md), even without `sbomTool`. It binds every regular
+archive file's relative path, exact hash, size and mode to the observed archive. Packaging evidence separately
+binds the final OCI manifest and that archive's inspection digest. Referenced charts, images, Terraform
+providers and runtime packages are not downloaded or inspected; this is delivered-file coverage only.
+
 A Definition may select a catalog-pinned Syft executable through `sbomTool`. Both maintained NVKE
 Environments require it. The graph then requires each observed payload and the acquired scanner as explicit
 SBOM inputs. Missing payloads, missing scanner pins, unsupported formats, mismatched bytes, scanner errors and
-empty inventories fail closed. Without `sbomTool`, ordinary declaration-only documents provide source
+empty inventories fail closed. Without `sbomTool`, ordinary non-bundle declaration-only documents provide source
 metadata; they do not claim dependency inspection. The separate full-disk profile pins its own scanner
 and does not require a second catalog scanner selection; when both select the same native platform their
 pins must agree. A catalog scanner for another platform does not replace the native inspection-profile pin.
@@ -216,8 +244,8 @@ an exact observed version: equal names with unknown versions do not prove identi
 Per-material mixed scanner/package-reader/file-walk documents use the descriptive `disk-content/v1`
 inspection method, not `syft-cyclonedx/v1`. Only the final correspondence operation uses
 `disk-reconciled/v1` with an `operating-system` subject. File dependency inventories are admitted only
-for these per-artifact disk methods and the separately scoped `archive-content/v1` method below,
-not ordinary Helm/Syft dependency documents. Source declarations
+for these per-artifact disk methods, the separately scoped `archive-content/v1` method below, and
+ADR-25's `bundle-files/v1` method, not ordinary Helm/Syft dependency documents. Source declarations
 cannot relabel the inspected disk subject. This is descriptive vocabulary validation: neither a subject
 type nor a method string restores a runtime receipt or grants publication authority.
 
@@ -412,10 +440,28 @@ Factory callers retain the ordinary dependency API; no maintained factory output
 Debian metadata diagnostic. Factory SBOM nodes inspect producer bytes before APT wrapping, and the existing
 executable/APT routes do not preserve a source-created Debian package. The diagnostic does not admit such
 a delivery route. The authoritative Debian material reader remains digest-pinned
-`dpkg-deb`, with platform checks and bounded payload expansion in the disk owner. A standalone Debian
-delivery format, declared-format propagation through path and held APIs, and payload coverage through that
-owner remain deferred. This diagnostic does not validate target architecture, preserve a source package,
+`dpkg-deb`, with platform checks and bounded payload expansion in the disk owner. Local raw Debian output uses ordinary producer-result authentication and archive retention.
+Independent standalone package payload inspection and dependency evidence remain deferred. This diagnostic does not validate target architecture, preserve a source package,
 enable direct APT publication, or prove installation.
+
+ADR-20's native `file` format must preserve source-created Debian packages unchanged.
+Its `deb` kind requires the pinned authoritative Debian tooling to validate package name, version,
+architecture and declared dependencies against the actual held package, then inspect bounded payload
+contents for the required subject-bound evidence. Archive acquisition, member hashes, control metadata
+and actual payload dependencies are distinct claims. No source pathname, filename suffix, caller hint,
+`archive-content/v1` inventory or `deb-archive-metadata/v1` diagnostic may satisfy the payload-evidence gate.
+Every selected package/member and architecture needs its own exact subject and output membership; variants
+that intentionally conflict use separate installation cases. Merely exposing current disk materials as
+files does not complete this evidence path. Native file delivery remains unadmitted until implementation
+satisfies its native package and independent consumer contracts and operational acceptance is recorded
+in reconciliation.
+
+For `efi`, `ipxe`, `kernel`, `initrd` and `iso` files, preserve the actual source/material and exact-byte
+subjects. An inventory of archive members establishes those bytes, not boot compatibility, installed
+contents or dependency completeness. The EFI build's pinned upstream, patches, submodules and acquired
+materials must be represented at the producer boundary, not hidden inside an uploader or ambient Make
+invocation. Rendered boot scripts have new exact-byte subjects; their source-template evidence cannot be
+presented as a signature over the rendered bytes. Transport signing is not UEFI Secure Boot acceptance.
 
 For Helm source archives and exact acquired archives selected as Helm outputs, a generic manifest reader inventories bundled `Chart.yaml` declarations and chart
 dependency declarations/locks. It never executes
@@ -478,8 +524,11 @@ or unbound documents and stages. Finalization compares the published documents w
 handoffs and final package inventory. The current consumer has no old-layout fallback. This establishes
 pipeline artifact-publication evidence, not qualified receipts, vulnerability clearance or signed completion.
 
-SBOMs remain `static-unqualified` in dry-run. Generation alone is no signature or reproduction proof. Acquired components retain `evidence: none` unless pinned upstream evidence is declared. V1 does not
-verify upstream signatures/provenance on acquisition. Vulnerability scanning stays outside v1.
+SBOMs remain `static-unqualified` in dry-run. Generation alone is no signature or reproduction proof, and dry-run
+does not retrieve or verify upstream evidence. Acquired components retain `evidence: none` unless pinned upstream
+evidence is declared. Evidence intake verifies declared upstream evidence as §2 states, including Sigstore provenance
+signatures through the pinned cosign verifier when a signer policy is declared;
+air-gapped signature verification is not yet supported. Vulnerability scanning stays outside v1.
 Curated/embedded aggregates use dependency edges from aggregate to members (ADR-10/22).
 
 ## Consequences
@@ -496,6 +545,7 @@ Curated/embedded aggregates use dependency edges from aggregate to members (ADR-
 - Vuln-report determinism requires provisioning and mirroring a pinned scanner DB/policy — an infra dependency
   for air-gap.
 - External-evidence conventions vary per upstream; some references degrade to `evidence: none`.
+- Signed upstream evidence depends on a pinned cosign and online access to the public-good Sigstore trust root.
 - Persisted and cross-boundary receipt issuers and waiver approvers require explicit trust-policy roles and
   key-rotation procedures; same-process capabilities require careful private-state and mutation-isolation tests.
 

@@ -4,6 +4,18 @@ The release index and its metadata live in `<publication.repositoryPrefix>/relea
 SBOM attestations live in sibling repositories named after the Definition outputs. For NVKE these are
 `<publication.repositoryPrefix>/nvkectl`, `…/cwe`, and `…/nvke-helm`.
 
+## Required publication transports
+
+The Environment can explicitly select OCI with `publication.transports: [oci]`. Omitting `transports`
+preserves the existing OCI behavior and authored identity. The existing `repositoryPrefix` and credential
+settings still apply to this route; output repositories remain compiler-derived.
+
+The recognized APT-only selection is `[apt]`, and both transports are selected as `[apt, oci]` in that
+sorted order. Every selected route is required. Direct APT publication is not implemented: either selection
+currently returns `engine-capability` before catalog, generation or execution work, without an OCI fallback.
+APT-only does not require OCI settings to report this capability gap. A local unsigned APT layout or its OCI
+upload does not satisfy a request for a signed, installable APT repository.
+
 ## Registry graph
 
 Solid arrows are OCI descriptors within a repository. Dashed metadata arrows bind exact sibling locations
@@ -194,7 +206,7 @@ Independent acceptance must also:
 Retain the exact Run/artifact references and positive and controlled-failure verification transcript for
 hosted acceptance. The commands and contract tests are not that transcript. There is no general release
 authorization command in this stack; verifying one attachment cannot grant it. Current qualification
-acceptance gaps remain in [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md#m3-mvp-scope-and-acceptance-boundary).
+acceptance gaps remain in [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/m3-mvp-scope-and-acceptance-boundary.md#m3-mvp-scope-and-acceptance-boundary).
 
 ## Validation boundary
 
@@ -208,7 +220,7 @@ The [recorded hosted candidate](https://github.com/dsx-ai-factory/nvkr/blob/a187
 signing, verification and finalization for 34 outputs, including both native disks. It used an explicitly
 admitted validation branch and `build-provenance-v1` disk evidence. This does not establish main-only
 execution, independent full-payload disk consumption, strict disk inspection or qualification. Current
-support and remaining acceptance are owned by [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md).
+support and remaining acceptance are owned by [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/README.md).
 
 Earlier [hosted release history](https://github.com/dsx-ai-factory/nvkr/blob/a187d6b702cbc1a70452760c606c2c4de1ed6618/docs/evidence/hosted-release-history.md#cosign-bundle-discovery) retains
 the mixed-attestation discovery incident and its exact cosign interoperability limits. Historical

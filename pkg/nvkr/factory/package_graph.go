@@ -21,6 +21,9 @@ func derivePublication(definition authored.Definition, environment authored.Envi
 	packages := make([]packageSpec, 0, len(definition.Outputs))
 	closureInputs := make([]string, 0, len(definition.Outputs))
 	for _, output := range definition.Outputs {
+		if output.Format == authored.OutputDebianPackage {
+			continue
+		}
 		if output.Format == authored.OutputDiskImage {
 			// Local raw-output diagnostics retain their existing lifecycle subject.
 			// Publication adds a distinct wrapper rather than changing that subject.
@@ -70,6 +73,8 @@ func derivePublication(definition authored.Definition, environment authored.Envi
 			spec.Component = output.APT.Component
 		case authored.OutputHelm:
 			spec.Kind = PackageHelm
+		case authored.OutputBundle:
+			spec.Kind = PackageBundle
 		}
 
 		if output.Format == authored.OutputHelm {
@@ -120,7 +125,7 @@ func packageProducerResults(inputs []string, nodes map[string]Node, artifacts ma
 		seen[inputID] = true
 		input := artifacts[inputID]
 		switch input.Kind {
-		case PackageBinaryBundle, PackageAPT, PackageHelm, PackageImage, PackageDiskImage:
+		case PackageBinaryBundle, PackageAPT, PackageHelm, PackageBundle, PackageImage, PackageDiskImage:
 		default:
 			continue
 		}
@@ -257,6 +262,20 @@ func expandSelectors(selectors []string, artifacts map[string]Artifact) ([]strin
 	return expanded, nil
 }
 
+// releaseCompanionInputs delivers each selected release executable's pinned
+// companions with it; they are never selected independently.
+func releaseCompanionInputs(inputs []string, nodes map[string]Node, artifacts map[string]Artifact) []string {
+	var companions []string
+	for _, input := range inputs {
+		for _, output := range nodes[artifacts[input].Producer].Outputs {
+			if artifacts[output].Kind == ArtifactReleaseCompanion {
+				companions = append(companions, output)
+			}
+		}
+	}
+	return companions
+}
+
 func observationInputs(inputs []string, artifacts map[string]Artifact) []string {
 	seen := map[string]bool{}
 	for _, input := range inputs {
@@ -309,6 +328,9 @@ func validatePackageInputs(spec packageSpec, inputs []string, artifacts map[stri
 	if spec.Kind == PackageHelm && len(inputs) != 1 {
 		return e.New(e.CodeInvalidCatalog, "Helm package %q requires exactly one tree or source archive", spec.Name)
 	}
+	if spec.Kind == PackageBundle && len(inputs) != 1 {
+		return e.New(e.CodeInvalidCatalog, "bundle package %q requires exactly one source archive", spec.Name)
+	}
 	if spec.Kind == PackageImage && spec.ImageIndex == nil && len(inputs) != 1 {
 		return e.New(e.CodeInvalidCatalog, "container image package %q requires exactly one OCI export", spec.Name)
 	}
@@ -334,6 +356,10 @@ func validatePackageInputs(spec packageSpec, inputs []string, artifacts map[stri
 	for _, id := range inputs {
 		artifact := artifacts[id]
 		switch spec.Kind {
+		case PackageBundle:
+			if artifact.Kind != "tarball" || artifact.BuildTarget != spec.Name || artifact.Component == "" {
+				return e.New(e.CodeInvalidCatalog, "bundle package %q requires its exact source archive producer", spec.Name)
+			}
 		case PackageDiskImage:
 			if artifact.Kind != PackageDiskImage || artifact.BuildTarget != spec.Name || artifact.Component == "" {
 				return e.New(e.CodeInvalidCatalog, "disk package %q requires its exact raw producer subject", spec.Name)
@@ -359,13 +385,13 @@ func validateRouteCompatibility(route Route, target Target, artifact Artifact) e
 	switch target.Kind {
 	case TargetAPT:
 		return e.New(e.CodeEngineCapability,
-			"delivery route %q requires an APT server publication adapter; transport the apt-repository package or enclose it in an OCI root", route.Name)
+			"delivery route %q requires an APT repository publication adapter that is not implemented", route.Name)
 	case TargetObject:
 		return e.New(e.CodeEngineCapability,
 			"delivery route %q requires an object-store publication adapter that is not implemented", route.Name)
 	case TargetOCI:
 		switch artifact.Kind {
-		case PackageBinaryBundle, PackageOCI, PackageHelm, PackageImage, PackageDiskImage, "oci-image":
+		case PackageBinaryBundle, PackageOCI, PackageHelm, PackageBundle, PackageImage, PackageDiskImage, "oci-image":
 		default:
 			return e.New(e.CodeInvalidCatalog, "delivery route %q sends unsupported %q to OCI target", route.Name, artifact.Kind)
 		}
@@ -385,6 +411,8 @@ func packageMediaType(kind string) string {
 		return "application/vnd.nvkr.apt-repository.v1"
 	case PackageHelm:
 		return "application/vnd.nvkr.helm-bundle.v1"
+	case PackageBundle:
+		return delivery.MediaBundle
 	default:
 		return delivery.MediaPublicationRoot
 	}

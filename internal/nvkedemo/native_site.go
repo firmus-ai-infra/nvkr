@@ -37,6 +37,7 @@ type NativeConfig struct {
 	Network, DemoExecutable string
 	conformance             *nativeConformanceConfig
 	Assets                  NativeAssetConfig
+	publication             *nativePublicationInputs
 	Cleanup, Walkthrough    bool
 	Progress                io.Writer
 }
@@ -85,6 +86,9 @@ func runNativeSite(ctx context.Context, cfg NativeConfig, use func(context.Conte
 			result = nvkrerr.Wrap(nvkrerr.CodePreflightFailed, result, "native NVKE demo")
 		}
 	}()
+	if err := admitNativeResourcesForNetwork(cfg.Resources, cfg.Network); err != nil {
+		return err
+	}
 	if err := requireContext(ctx); err != nil {
 		return err
 	}
@@ -104,9 +108,7 @@ func runNativeSite(ctx context.Context, cfg NativeConfig, use func(context.Conte
 	if err := admitNativeSeedISO(ctx, runtime.GOOS, NativeEnvironment()); err != nil {
 		return err
 	}
-	if cfg.conformance != nil && runtime.GOARCH != "arm64" {
-		return nvkrerr.New(nvkrerr.CodeEngineCapability, "local conformance requires native ARM64")
-	}
+
 	if err := admitBootstrapHost(runtime.GOOS, NativeEnvironment()); err != nil {
 		return err
 	}
@@ -117,7 +119,7 @@ func runNativeSite(ctx context.Context, cfg NativeConfig, use func(context.Conte
 	if err != nil {
 		return err
 	}
-	if cfg.Image == "" || cfg.Assets.RuntimeRun == "" {
+	if cfg.publication == nil && (cfg.Image == "" || cfg.Assets.RuntimeRun == "") {
 		return errors.New("require a local QCOW, explicit accelerator and completed runtime-image Run")
 	}
 	out, err := freshDestination(cfg.Out)
@@ -132,8 +134,10 @@ func runNativeSite(ctx context.Context, cfg NativeConfig, use func(context.Conte
 	if err := capacity.check(ctx, filepath.Dir(out), false, cfg.Progress); err != nil {
 		return err
 	}
-	if _, err := DigestFile(ctx, cfg.Image); err != nil {
-		return err
+	if cfg.publication == nil {
+		if _, err := DigestFile(ctx, cfg.Image); err != nil {
+			return err
+		}
 	}
 	if err := os.Mkdir(out, 0700); err != nil {
 		return err
@@ -142,7 +146,12 @@ func runNativeSite(ctx context.Context, cfg NativeConfig, use func(context.Conte
 	cfg.Assets.Out = filepath.Join(out, "assets")
 	cfg.Assets.Progress = cfg.Progress
 	preparation := beginProgress(cfg.Progress, "installer-preparation", PhaseStarted, PhaseFinished, PhaseFailed)
-	assets, err := PrepareNativeAssets(ctx, cfg.Assets)
+	var assets NativeAssets
+	if cfg.publication == nil {
+		assets, err = PrepareNativeAssets(ctx, cfg.Assets)
+	} else {
+		assets, cfg.Image, err = cfg.publication.prepare(ctx, cfg.Assets.Out)
+	}
 	preparation.finish(err)
 	if err != nil {
 		return err
@@ -200,8 +209,8 @@ func nativeSiteSeed(ctx context.Context, source, out string, resources NativeRes
 	}
 	// Change only runtime sizing after both selected source rows are admitted.
 	// Source artifacts remain untouched, and tenant CNI requests remain intact.
-	site["name"], site["memory_gib"] = fmt.Sprintf("native-site-cpu%d-mem%dgb-disk60gb", site["cpu_count"], resources.SiteMemoryGiB), resources.SiteMemoryGiB
-	tenant["name"], tenant["cpu_count"], tenant["memory_gib"] = fmt.Sprintf("cpu%d-mem%dgb-disk60gb", tenantDemoVCPUs, resources.TenantMemoryGiB), tenantDemoVCPUs, resources.TenantMemoryGiB
+	site["name"], site["cpu_count"], site["memory_gib"] = fmt.Sprintf("native-site-cpu%d-mem%dgb-disk60gb", resources.VCPUs, resources.SiteMemoryGiB), resources.VCPUs, resources.SiteMemoryGiB
+	tenant["name"], tenant["cpu_count"], tenant["memory_gib"] = fmt.Sprintf("cpu%d-mem%dgb-disk60gb", resources.VCPUs, resources.TenantMemoryGiB), resources.VCPUs, resources.TenantMemoryGiB
 	raw, err = yaml.Marshal(doc)
 	if err != nil {
 		return "", err
@@ -305,6 +314,7 @@ func (s *nativeSiteAttempt) startup(ctx context.Context, api, diskURL, out strin
 		ControllerImage: s.assets.Images["controller"].Reference, ProviderImage: s.assets.Images["provisioned-provider"].Reference,
 		HandoffURL: handoff.URL, HandoffToken: handoff.Token, HandoffCertificate: handoff.Certificate,
 		Deployment: &NativeSiteDeployment{NicoURL: api, ImageURL: diskURL, ProfilesImage: s.assets.Images["profiles"].Reference},
+		arch:       s.assets.arch, imageTags: s.assets.importTags, resourceProfile: s.resources.Profile,
 	}
 	cfg.ImageImports = make(map[string]string)
 	for role, image := range s.assets.Images {
@@ -357,7 +367,7 @@ func (s *nativeSiteAttempt) closeTenant(ctx context.Context) error {
 	}
 	cleanup := s.tenantOwner.restore(ctx)
 	if cleanup != nil && !errors.Is(cleanup, ErrUnjoined) {
-		cleanup = retainNativeSiteFailure(ctx, runner, s.assets.HostTools, filepath.Join(s.tenantOwner.session.Work, "site.kubeconfig"), cleanup)
+		cleanup = retainNativeSiteFailure(ctx, runner, s.assets, filepath.Join(s.tenantOwner.session.Work, "site.kubeconfig"), cleanup)
 	}
 	return cleanup
 }
@@ -453,12 +463,9 @@ func runNativeDemo(ctx context.Context, site *NativeSite) error {
 			return err
 		}
 	}
-	var domains []domainEvidence
-	if s.guard != nil {
-		domains, err = nativeLinuxVMEvidence(ctx, runner, s.simulatorWork, s.diskDigest, 1+s.tenantNodeCount())
-		if err != nil {
-			return err
-		}
+	domains, err := s.observeGuestDomains(ctx, runner)
+	if err != nil {
+		return err
 	}
 	if err := privateJSON(filepath.Join(out, "native-result.json"), struct {
 		Scope, Network, ImageDigest string
@@ -526,7 +533,11 @@ func (s *nativeSiteAttempt) prepareBoot(ctx context.Context, imageURL, api strin
 	if err := requireContext(ctx); err != nil {
 		return err
 	}
-	path := filepath.Join(s.assets.Installer, "controller", "test", "fixtures", "releases", "nvke-nico-vms-24.04-arm64-fde-machineimage.yaml")
+	arch := s.assets.arch
+	if _, err := nativeQEMUArchitecture(arch); err != nil {
+		return err
+	}
+	path := filepath.Join(s.assets.Installer, "controller", "test", "fixtures", "releases", "nvke-nico-vms-24.04-"+arch+"-fde-machineimage.yaml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -582,7 +593,23 @@ func (s *nativeSiteAttempt) tenantNodeCount() int {
 // Native acceptance binds every requested Kubernetes node to a distinct VM boot.
 // The legacy diagnostic owner has a separate observation contract.
 func readyNativeTenantNodes(nodes []tenantNode, version string, expected int) (bool, error) {
-	ready, err := readyNodesForCountVersion(nodes, version, expected)
+	return readyNativeTenantNodesForArchitecture(nodes, version, expected, "arm64")
+}
+
+func (s *nativeSiteAttempt) observeGuestDomains(ctx context.Context, runner Runner) ([]domainEvidence, error) {
+	if s.guard == nil {
+		return nil, nil // Mac observations remain with the native QEMU owner.
+	}
+	arch := s.assets.arch
+	resources, err := selectedNativeResources(s.resources)
+	if err != nil {
+		return nil, err
+	}
+	return nativeLinuxVMEvidenceForResources(ctx, runner, s.simulatorWork, s.diskDigest, 1+s.tenantNodeCount(), arch, resources.VCPUs)
+}
+
+func readyNativeTenantNodesForArchitecture(nodes []tenantNode, version string, expected int, arch string) (bool, error) {
+	ready, err := readyNodesForCountVersionArchitecture(nodes, version, expected, arch)
 	if err != nil || !ready {
 		return ready, err
 	}
@@ -604,15 +631,22 @@ func (s *nativeSiteAttempt) namedTenantRequest(ctx context.Context, name string)
 	if err != nil {
 		return TenantRequest{}, err
 	}
+	ovnVersion, _, _, err := selectedOVNOutputs(mode)
+	if err != nil {
+		return TenantRequest{}, err
+	}
+	if err := admitNativeResourceProfile(s.resources.Profile, ovnVersion); err != nil {
+		return TenantRequest{}, err
+	}
 	version, err := nativeKubernetesVersion(ctx, s.assets)
 	if err != nil {
 		return TenantRequest{}, err
 	}
 	request := TenantRequest{
 		Name: name, Kubernetes: version, CNI: "ovn-kubernetes", CNIVersion: siteOVNVersion,
-		ControlPlane: ControlPlaneIntent{Count: 1, Reserved: "1Gi", DisableMonitor: true},
+		ControlPlane: ControlPlaneIntent{Count: 1, Reserved: nativeReservedMemory(s.resources.Profile), DisableMonitor: true},
 		NodePools: []NodePoolIntent{{Name: "worker", Prefix: "w", Count: s.tenantNodeCount() - 1,
-			SystemReserved: "1Gi", KubeReserved: "1Gi", DisableAuto: true, DisableMonitor: true}},
+			SystemReserved: nativeReservedMemory(s.resources.Profile), KubeReserved: nativeReservedMemory(s.resources.Profile), DisableAuto: true, DisableMonitor: true}},
 	}
 	switch mode {
 	case "ovn":
@@ -704,7 +738,7 @@ func (s *nativeSiteAttempt) runTenantRequest(ctx context.Context, runner Runner,
 		}
 		progress.conditions = fresh.Conditions
 		progress.update(time.Now(), stage, nodes)
-		// NVKE v0.22.0 clusterstate.IsProvisioningFailed uses exactly these
+		// NVKE v0.23.0 clusterstate.IsProvisioningFailed uses exactly these
 		// two statuses. Missing or Unknown conditions do not prove failure.
 		if fresh.Conditions.Provisioning.Status == TenantConditionFalse && fresh.Conditions.Provisioned.Status == TenantConditionFalse {
 			return errors.New("NVKE reported native tenant provisioning failed")
@@ -758,7 +792,8 @@ func (s *nativeSiteAttempt) runTenantRequest(ctx context.Context, runner Runner,
 				return err
 			}
 			observed = nodes.Items
-			ready, err := readyNativeTenantNodes(nodes.Items, request.Kubernetes, s.tenantNodeCount())
+			arch := s.assets.arch
+			ready, err := readyNativeTenantNodesForArchitecture(nodes.Items, request.Kubernetes, s.tenantNodeCount(), arch)
 			if err != nil {
 				return err
 			}
@@ -779,7 +814,8 @@ func (s *nativeSiteAttempt) runTenantRequest(ctx context.Context, runner Runner,
 		return err
 	}
 	progress.update(time.Now(), "tenant-cloud-init", observed)
-	if err := runNativeCloudInit(budget, out, tenantConfig, kubectl, request.Kubernetes, workloadImage, s.tenantNodeCount(), observed, capture); err != nil {
+	arch := s.assets.arch
+	if err := runNativeCloudInitForArchitecture(budget, out, tenantConfig, kubectl, request.Kubernetes, workloadImage, s.tenantNodeCount(), observed, arch, capture); err != nil {
 		return err
 	}
 	if err := waitTenantDNS(budget, tenantConfig, kubectl, runner.Progress, capture); err != nil {
@@ -787,8 +823,15 @@ func (s *nativeSiteAttempt) runTenantRequest(ctx context.Context, runner Runner,
 	}
 	progress.update(time.Now(), "tenant-workload", observed)
 	s.nodes = observed
-	s.workload, err = runTenantWorkload(budget, out, tenantConfig, kubectl, workloadImage, capture)
-	return err
+	s.workload, err = runTenantWorkloadForArchitecture(budget, out, tenantConfig, kubectl, workloadImage, arch, capture)
+	if err != nil {
+		return err
+	}
+	domains, err := s.observeGuestDomains(budget, runner)
+	if err != nil || domains == nil {
+		return err
+	}
+	return privateJSON(filepath.Join(out, "native-domains.json"), domains)
 }
 
 // The source-owned controller chart admits API ingress from cluster pods.
@@ -797,30 +840,51 @@ func (s *nativeSiteAttempt) admitAPIClient(ctx context.Context, runner Runner, t
 	if err := requireContext(ctx); err != nil {
 		return err
 	}
+	controller, err := nativeControllerForAssets(ctx, s.assets)
+	if err != nil {
+		return err
+	}
 	gateway := s.bridge.gateway
 	if !gateway.Is4() || !gateway.IsPrivate() || !s.bridge.prefix.Contains(gateway) {
 		return nvkrerr.New(nvkrerr.CodeEngineCapability, "API client admission requires the observed private IPv4 demo gateway")
 	}
 	raw, err := s.capture(ctx, runner, "api-client-controller", filepath.Join(tools, "kubectl"), "--kubeconfig", kubeconfig,
-		"-n", "nke-controller", "get", "deployments", "-l", "app.kubernetes.io/instance=nke-controller", "-o", "json")
+		"-n", controller.name, "get", "deployments", "-l", "app.kubernetes.io/instance="+controller.name, "-o", "json")
 	if err != nil {
 		return err
 	}
 	var observed struct {
 		Items []struct {
 			Metadata struct {
+				Name      string `json:"name"`
 				Namespace string `json:"namespace"`
 			} `json:"metadata"`
 			Spec struct {
 				Selector json.RawMessage `json:"selector"`
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Name string `json:"name"`
+						} `json:"containers"`
+					} `json:"spec"`
+				} `json:"template"`
 			} `json:"spec"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(raw, &observed); err != nil {
 		return err
 	}
-	if len(observed.Items) != 1 || observed.Items[0].Metadata.Namespace != "nke-controller" {
-		return errors.New("API client admission requires exactly one controller Deployment in its namespace")
+	if len(observed.Items) != 1 || observed.Items[0].Metadata.Namespace != controller.name || observed.Items[0].Metadata.Name != controller.name {
+		return nvkrerr.New(nvkrerr.CodeEngineCapability, "API client admission requires exactly the source-selected controller Deployment in its namespace")
+	}
+	containers := 0
+	for _, container := range observed.Items[0].Spec.Template.Spec.Containers {
+		if container.Name == controller.name {
+			containers++
+		}
+	}
+	if containers != 1 {
+		return nvkrerr.New(nvkrerr.CodeEngineCapability, "API client admission requires exactly one source-selected controller container")
 	}
 	selector := observed.Items[0].Spec.Selector
 	var selected struct {
@@ -829,13 +893,13 @@ func (s *nativeSiteAttempt) admitAPIClient(ctx context.Context, runner Runner, t
 	if err := json.Unmarshal(selector, &selected); err != nil {
 		return err
 	}
-	if selected.MatchLabels["app.kubernetes.io/instance"] != "nke-controller" {
-		return errors.New("API client admission requires the exact controller release selector")
+	if selected.MatchLabels["app.kubernetes.io/instance"] != controller.name || selected.MatchLabels["app.kubernetes.io/name"] != controller.name {
+		return nvkrerr.New(nvkrerr.CodeEngineCapability, "API client admission requires the source-selected controller release and name selector")
 	}
 	// Preserve the server's complete selector. Kubernetes, through kubectl apply,
 	// owns LabelSelector validation; this consumer does not parse its grammar.
 	policy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
-		"metadata": map[string]string{"name": "nvke-demo-api-client", "namespace": "nke-controller"},
+		"metadata": map[string]string{"name": "nvke-demo-api-client", "namespace": controller.name},
 		"spec": map[string]any{"podSelector": selector, "policyTypes": []string{"Ingress"},
 			"ingress": []any{map[string]any{"from": []any{map[string]any{"ipBlock": map[string]string{"cidr": netip.PrefixFrom(gateway, 32).String()}}},
 				"ports": []any{map[string]any{"protocol": "TCP", "port": 8080}}}}}}
@@ -864,11 +928,27 @@ func (s *nativeSiteAttempt) selectBootNetwork(network nativeBridgeConfig, diskUR
 	return network, nil
 }
 
+// nativeMachineImageDiskSlot is the pinned NVKE MachineImage fixture's local QCOW URL.
+const nativeMachineImageDiskSlot = "http://127.0.0.1:18080/files/images/nvke-node.qcow2"
+
 func projectNativeSiteBoot(ctx context.Context, source, diskURL string) (*nativeSiteBoot, error) {
 	if err := requireContext(ctx); err != nil {
 		return nil, err
 	}
-	if strings.Count(source, "http://127.0.0.1/nvke-node.qcow2") != 1 {
+	// NVKE's retained and current fixtures name different loopback endpoints.
+	// Admit one known slot across both forms; NICoSim owns iPXE interpretation.
+	var sourceURL string
+	slots := 0
+	for _, candidate := range []string{
+		"http://127.0.0.1/nvke-node.qcow2",
+		nativeMachineImageDiskSlot,
+	} {
+		if count := strings.Count(source, candidate); count != 0 {
+			slots += count
+			sourceURL = candidate
+		}
+	}
+	if slots != 1 {
 		return nil, errors.New("source MachineImage must expose one local QCOW URL slot")
 	}
 	location, err := url.Parse(diskURL)
@@ -879,7 +959,7 @@ func projectNativeSiteBoot(ctx context.Context, source, diskURL string) (*native
 	if err != nil || !address.Is4() || !address.IsPrivate() {
 		return nil, errors.New("native site boot requires the owned private disk endpoint")
 	}
-	projected := strings.Replace(source, "http://127.0.0.1/nvke-node.qcow2", diskURL, 1)
+	projected := strings.Replace(source, sourceURL, diskURL, 1)
 	parsed, err := template.New("source-machine-image").Option("missingkey=error").Parse(projected)
 	if err != nil {
 		return nil, err

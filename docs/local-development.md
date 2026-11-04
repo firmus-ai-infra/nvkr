@@ -97,14 +97,15 @@ Direct `nvkr run local` callers can request the same capture with
 `--capture-inputs-root .` and repository-relative Definition and Environment paths.
 Dry runs retain no attempt or input snapshot.
 
-## Rehearse local M3 qualification
+## Qualify local artifacts
 
-On native Linux, `run qualify-local` checks a completed captured attempt, authenticates it with a local
-builder key, executes the complete selected native tool-smoke scope, signs smoke and qualification under
-two distinct keys, publishes payloads and evidence, then independently verifies registry read-back.
-Its result remains `unqualified-local-execution`. The native ARM64 29-output rehearsal has passed this
-command, including all 10 delivered tool members. Exact artifact references and remaining checks are tracked in
-[reconciliation](adr/reconciliation.md#local-m3-demo-rehearsal).
+On native Linux, `run qualify-local` verifies every output of a completed captured Run, signs and verifies
+its build evidence, and checks each selected native tool's version in isolation. Separate keys sign the
+tool-check report and qualification statement. It then publishes artifacts and signed evidence, downloads
+the complete set again and independently verifies the bytes, saved inputs and signatures.
+Its result remains `unqualified-local-execution`. A recorded 2026-10-16 native ARM64 run passed for
+29 outputs and 10 delivered tools. Exact artifact references and remaining checks are tracked in
+[reconciliation](adr/reconciliation/m3-mvp-scope-and-acceptance-boundary.md#local-qualification-demo).
 
 For a new complete demo, add `--qualify-local` to the normal native Linux ARM64 command:
 
@@ -323,7 +324,7 @@ bash scripts/nvke-full-arm64-local.sh first-tools 1 tools
 
 The bundle contains Linux ARM64 Helm 4.2.4, kubectl 1.36.0, clusterctl 1.13.6,
 ORAS 1.3.3 and Kind 0.32.0, matching
-[NVKE's pinned installer declarations](https://github.com/dsx-ai-factory/nvke/blob/400c24fb6465b042be883d6b62472528520d6291/make/tool-versions.mk).
+[NVKE's pinned installer declarations](https://github.com/dsx-ai-factory/nvke/blob/2cfd00081b468d85a4894ec17e9deac13c9d8169/make/tool-versions.mk).
 See [catalog producers](../inputs/catalogs/tools/installer-local-arm64/registry.yaml)
 and generated pins for exact commits, compiler and preparation instructions.
 
@@ -381,7 +382,7 @@ For tight edit loops use NVKE's own Make/tests. To test NVKR packaging, commit y
 change in a dedicated NVKE clone and pin the changed producer. `NVKE_LOCAL_CLONE`
 changes transport only; it does not follow your branch or include dirty files.
 
-For the retained CLI example, start from its `v0.22.0` baseline.
+For the retained CLI example, start from its `v0.23.0` baseline.
 Use native `nvkr` built with the repository's pinned Go:
 
 ```sh
@@ -409,4 +410,4 @@ repinning. Copy shared catalogs before experimenting with controller/OS changes.
 Unit/contract tests do not prove clean-machine setup, a fresh complete E2E run,
 full-source membership, a complete disk smoke or qualification. Require terminal
 Run records and real consumer checks for your own invocation. Current limits
-belong in [reconciliation](adr/reconciliation.md), not a second quickstart.
+belong in [reconciliation](adr/reconciliation/README.md), not a second quickstart.

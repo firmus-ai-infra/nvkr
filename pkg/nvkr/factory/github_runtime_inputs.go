@@ -19,14 +19,14 @@ func CheckGitHubRuntimeInputs(ctx context.Context, plan *Plan, root string) erro
 	if err := admitGitHubRuntimeInputs(ctx, plan, root); err != nil {
 		return err
 	}
+	if plan.Environment.GitHubRuntimeSource != nil && plan.RuntimeSourceCommit == "" {
+		return e.New(e.CodeUnpinnedSource, "runtime source inputs omit the frozen commit")
+	}
 	if err := checkGitHubRuntimeAuthoredInputs(ctx, plan, root); err != nil {
 		return err
 	}
-	bundle, err := RenderGitHub(ctx, plan)
-	if err != nil {
-		return err
-	}
-	return CheckGeneratedBundle(ctx, root, bundle)
+	_, err := checkCoreGitHubBundle(ctx, plan, root)
+	return err
 }
 
 func admitGitHubRuntimeInputs(ctx context.Context, plan *Plan, root string) error {

@@ -32,6 +32,11 @@ make build
 make check
 ```
 
+`make ci-check` runs every merge-gate check that can run locally: the code gate plus the build, actionlint,
+notices drift, workflow drift and Fern docs checks. Workflow drift re-reads the pinned NVKE source, so it needs
+read access to the private NVKE repository; the docs check needs Node and the Fern CLI. CodeQL runs only on
+GitHub.
+
 `make help` lists targets. The full release-blocking verification includes:
 
 ```sh
@@ -48,8 +53,8 @@ git diff --check
 
 The operator-facing site published with Fern is a separate gate. Pages are those listed in
 [docs/index.yml](docs/index.yml); other documents stay on GitHub. After changing a published page, its navigation
-or `fern/`, run `make docs-check`, which needs Node and the Fern CLI (`npm install -g fern-api@latest`; Fern is not
-pinned). CI runs the same target as the `docs` job of the merge gate. The Fern checks run on an isolated copy of
+or `fern/`, run `make fern-install` once (needs Node) and then `make docs-check`. The Fern CLI and its dependencies
+are locked in `tools/fern/package-lock.json`; `fern/fern.config.json` names the same version. CI runs the same target as the `docs` job of the merge gate. The Fern checks run on an isolated copy of
 only the listed pages, so a published page must not link to an unpublished page or to a file outside `docs/`; use a
 GitHub URL for those. Registered release versions are ignored by this check (it needs `yq` once any exist).
 
@@ -279,7 +284,7 @@ CI come from its selected catalog and lock, rather than edits to rendered YAML.
 Pull requests check both producer bundles and the qualification pair. The maintained publication route admits default-branch manual dispatch;
 only its isolated artifact-signing and SBOM-attestation jobs receive OIDC minting permission. Generic hosted
 runners are the default, with ADR-18's explicitly admitted native ARC disk routes. Dated validation-branch
-exceptions and completed Runs are scoped in [reconciliation](docs/adr/reconciliation.md).
+exceptions and completed Runs are scoped in [reconciliation](docs/adr/reconciliation/README.md).
 
 ## Test timing and cache use
 
@@ -372,7 +377,7 @@ is rejected by dependency SBOM attachment and serialized BOM validation. Factory
 dependency API; no maintained factory output invokes this separate diagnostic. This is not delivered-package
 inspection, payload dependency coverage, installation, signing or publication.
 See [the dependency SBOM reference](docs/dependency-sboms.md) and the
-[dated local fixture observation](docs/adr/reconciliation.md#external-run-references). Native amd64 execution
+[dated local fixture observation](docs/adr/reconciliation/external-run-references.md#external-run-references). Native amd64 execution
 has not been recorded. Rerun the opt-in regression when changing either the factory catalog Syft pin or the
 Syft pin in `toolchains/nvkr-disk-inspect`; record which selected native executable was exercised.
 
@@ -408,7 +413,7 @@ Catalog resolution, pin maintenance, and producer admission have distinct files 
 | Release authority and delivery | `release`, `status`, `delivery` |
 | Public adapters | `client/v1`, `cmd/nvkr` — delegate authority |
 
-Read the relevant current ADR and [reconciliation row](docs/adr/reconciliation.md) before changing authority.
+Read the relevant current ADR and [reconciliation row](docs/adr/reconciliation/README.md) before changing authority.
 Use package-issued opaque receipts, admit capabilities before side effects, validate the complete graph at
 executable boundaries, and preserve exact subject/policy identities. Low-level diagnostic APIs cannot turn
 caller-authored descriptions into authority.

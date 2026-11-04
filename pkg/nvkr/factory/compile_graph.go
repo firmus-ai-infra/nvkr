@@ -25,6 +25,10 @@ func compileArtifactGraph(plan Plan, tools map[string]catalog.ToolPin, packageSp
 		runsOn = DefaultRunsOn
 	}
 	plan.Graph = ArtifactGraph{SchemaVersion: ArtifactGraphSchema}
+	tools, err := withProducerTools(tools, plan.Builds)
+	if err != nil {
+		return ArtifactGraph{}, err
+	}
 	artifacts := map[string]Artifact{}
 	nodes := map[string]Node{}
 	for _, name := range sortedKeys(tools) {
@@ -76,7 +80,8 @@ func compileArtifactGraph(plan Plan, tools map[string]catalog.ToolPin, packageSp
 			continue
 		}
 		disk := plan.hasCompiledDiskTarget(node.BuildTarget, artifacts)
-		if !disk && definition.SBOMTool == "" {
+		bundle := plan.hasBundleTarget(node.BuildTarget)
+		if !disk && !bundle && definition.SBOMTool == "" {
 			continue
 		}
 		components := map[string]bool{}
@@ -90,7 +95,7 @@ func compileArtifactGraph(plan Plan, tools map[string]catalog.ToolPin, packageSp
 				node.Inputs = append(node.Inputs, artifact.ID)
 			}
 		}
-		if !disk {
+		if !disk && definition.SBOMTool != "" {
 			node.Inputs = append(node.Inputs, "tool/"+definition.SBOMTool)
 		}
 		node.Inputs = uniqueSorted(node.Inputs)
@@ -108,6 +113,9 @@ func compileArtifactGraph(plan Plan, tools map[string]catalog.ToolPin, packageSp
 		}
 		if err := validatePackageInputs(spec, inputs, artifacts); err != nil {
 			return ArtifactGraph{}, err
+		}
+		if spec.Kind == PackageBinaryBundle {
+			inputs = append(inputs, releaseCompanionInputs(inputs, nodes, artifacts)...)
 		}
 		if spec.Kind == PackageImage {
 			for _, inputID := range append([]string(nil), inputs...) {
@@ -141,6 +149,13 @@ func compileArtifactGraph(plan Plan, tools map[string]catalog.ToolPin, packageSp
 				input := artifacts[inputs[0]]
 				inputs = append(inputs, "result/"+input.BuildTarget+"/"+input.Component)
 			}
+		}
+		if spec.Kind == PackageBundle {
+			input := artifacts[inputs[0]]
+			if nodes[input.Producer].Kind != NodeBuild {
+				return ArtifactGraph{}, e.New(e.CodeInvalidCatalog, "bundle package %q requires a source build", spec.Name)
+			}
+			inputs = append(inputs, "result/"+input.BuildTarget+"/"+input.Component)
 		}
 		// Packaging is explicitly gated by each target's terminal observation as a
 		// separate input, rather than hiding the policy edge in scheduler needs.

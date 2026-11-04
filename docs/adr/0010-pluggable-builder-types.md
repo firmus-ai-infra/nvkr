@@ -1,9 +1,9 @@
 # ADR-10 — Pluggable builder types (OCI-hermetic · Nix · VM image · prebuilt)
 
 - **Decision status:** Proposed (implementation-aligned draft; pending named-decider ratification)
-- **Implementation maturity:** Tracked separately in `reconciliation.md`; implementation and test evidence do not
+- **Implementation maturity:** Tracked separately in `reconciliation/README.md`; implementation and test evidence do not
   constitute governance ratification.
-- **Acceptance-test maturity:** Tracked separately in `reconciliation.md`; green unit tests alone do not
+- **Acceptance-test maturity:** Tracked separately in `reconciliation/README.md`; green unit tests alone do not
   establish end-to-end conformance.
 - **Deciders:** [INPUT NEEDED — author + reviewers]
 - **Index:** ADR-10 in the consolidated NVKR ADR set.
@@ -33,6 +33,11 @@ hold, and the trust/verify model is untouched.
 
 ## Decision
 
+Adopt a **builder abstraction**: one intermediate representation (IR), many builder types — the build-execution
+analogue of "one IR, many CI adapters." Nix is **orchestrated as a subprocess** inside a pinned container, never
+linked into the core, exactly as other external tools are treated. That satisfies the Apache-2.0 linkage
+constraint, and Nix can enter the reproducibility boundary only after its execution and observation adapters pass acceptance.
+
 Local executable diagnostics may cross-compile CGO-free Darwin ARM64 host packages and tarballs in an
 explicitly recorded Linux ARM64 OCI toolchain. Payload and toolchain platforms remain separate identity
 fields (ADR-12). This does not admit Darwin images, disks, hosted execution, signing or qualified authority.
@@ -47,11 +52,6 @@ It declares host networking rather than claiming an enforced network sandbox. Sy
 Apple SDK remain host dependencies. This route is unqualified, local only, and rejects signing/publication;
 it does not provide hostile-same-UID protection or sealed-descriptor execution. It downloads no compiler.
 An output-scoped catalog overlay binds the measured toolchain without changing source pins or source bytes.
-
-Adopt a **builder abstraction**: one intermediate representation (IR), many builder types — the build-execution
-analogue of "one IR, many CI adapters." Nix is **orchestrated as a subprocess** inside a pinned container, never
-linked into the core, exactly as other external tools are treated. That satisfies the Apache-2.0 linkage
-constraint, and Nix can enter the reproducibility boundary only after its execution and observation adapters pass acceptance.
 
 1. **Taxonomy (two axes).** An acquisition **lane** — `from-source` XOR `prebuilt` XOR `exclusion` — remains the
    top-level discriminator. A **builder type** refines *from-source only*:
@@ -123,6 +123,19 @@ indeterminate lanes are definition errors. The `buildkit-rootless` builder imple
 for OCI-export archives on the admitted Docker or Podman runtime, locally and in generated lifecycle Runs. The direct-Packer VM route has the separate contract below. Other wrapped adapters and Nix
 qualified execution remain deferred. A component may select its own digest-pinned toolchain image while
 retaining the same pinned source as other components; this changes its build identity, not its source pin.
+
+### Raw Debian output
+
+A Debian package is an output of the existing `host-package` source producer, not a new builder or runtime.
+The component declares its platform, pinned toolchain, command, private output directory and archive path
+through ordinary catalog fields. Distribution-specific commands and toolchains belong to explicit components;
+there is no separate target-profile resolver or inferred distribution/platform default.
+
+A standalone `debian-package` Definition output selects one archive producer. The normal producer session
+executes it; existing producer-result authentication, bounded held files and lifecycle staging preserve exact
+bytes and rollback on failure. OS consumers use the ordinary material handoff. These local artifacts carry
+composition metadata only. Full-content inspection, independent architecture/ABI acceptance and authenticated
+provenance remain separate; direct-node/hosted raw-DEB execution, signing and publication remain gated.
 
 ### Disk-image authoring contract
 
@@ -452,7 +465,7 @@ material identities remain part of the build/evidence contract, alongside signat
 output membership. ADR-13 separately requires traced materials and read-only final-disk inspection for the
 strict evidence route. Its explicit M2 and M3 MVP `build-provenance-v1` mode instead binds live producer/material
 evidence and records inspection as not performed; strict inspection is deferred hardening. Current implementation
-and evidence remain in [reconciliation](reconciliation.md). Embedded-software correctness and runtime validation
+and evidence remain in [reconciliation](reconciliation/README.md). Embedded-software correctness and runtime validation
 remain the upstream build owner's duty. ADR-22's future curated-set derivation remains deferred.
 
 ## Consequences

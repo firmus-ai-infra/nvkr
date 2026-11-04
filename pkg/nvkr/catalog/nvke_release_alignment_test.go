@@ -14,14 +14,18 @@ import (
 func TestNVKEReleasePinsStayAligned(t *testing.T) {
 	for _, directory := range []string{
 		"nvke/release", "nvke/release-components", "nvke/module-tags", "nvke/module-cli-arm64",
-		"nvke/local-site-arm64", "nvke/native-site-arm64", "nvke/nightly-site-arm64",
+		"nvke/local-site-arm64", "nvke/native-site", "nvke/nightly-site-arm64",
 		"node-images/release", "node-images/diagnostic",
-		"controller-profiles/nvidia-arm64", "controller-profiles/upstream-arm64", "controller-profiles/native-nvidia-arm64",
+		"controller-profiles/nvidia-arm64", "controller-profiles/upstream-arm64", "controller-profiles/native-nvidia",
 		"nicosim", "tools/native", "runtime-dependencies",
 	} {
 		t.Run(directory, func(t *testing.T) {
 			root := filepath.Join("../../../inputs/catalogs", directory)
-			registry, err := readRegistry(Dir(root))
+			bound, err := BindContext(t.Context(), Dir(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry, err := readRegistry(bound)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -34,8 +38,8 @@ func TestNVKEReleasePinsStayAligned(t *testing.T) {
 					continue
 				}
 				pin := lock.Pins[name]
-				if source.Constraint != "v0.22.0" || source.TagPrefix != "" || pin.Tag != "v0.22.0" || pin.Commit != "400c24fb6465b042be883d6b62472528520d6291" || pin.TreeHash != "f3afc02f5c92f4aacda3a1655836a91bef093bfe" || pin.SourceDateEpoch != 1792548398 {
-					t.Fatalf("%s must select the complete NVKE v0.22.0 identity: %+v", name, pin)
+				if source.Constraint != "v0.23.0" || source.TagPrefix != "" || pin.Tag != "v0.23.0" || pin.Commit != "2cfd00081b468d85a4894ec17e9deac13c9d8169" || pin.TreeHash != "a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53" || pin.SourceDateEpoch != 1793236039 {
+					t.Fatalf("%s must select the complete NVKE v0.23.0 identity: %+v", name, pin)
 				}
 				for component, producer := range registry.Components {
 					if producer.Source == name && producer.Prebuilt != nil && producer.Prebuilt.Image != "" && lock.Artifacts[component].Tag != pin.Tag {
@@ -58,16 +62,62 @@ func TestNVKEOverlayPinsStayAligned(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			tag, commit := "v0.23.0", "2cfd00081b468d85a4894ec17e9deac13c9d8169"
+			tree, epoch := "a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53", int64(1793236039)
+			if filepath.Base(path) == "current-main-doca-ovs.json" {
+				if overlay.Name != "nvke-current-main-doca-ovs" || len(overlay.Components) != 1 || overlay.Components["nvke-image-inputs"].Component == nil {
+					t.Fatal("current-main DOCA overlay must replace only image composition")
+				}
+				// This reviewed Git revision is the static baseline for the
+				// nightly-only overlay. Runtime source selection rebinds it.
+				tag, commit = "82c8b7e8a3d4fa0ca301cb8eead4a6abea043755", "82c8b7e8a3d4fa0ca301cb8eead4a6abea043755"
+				tree, epoch = "94b1b7a18148ef98bdc1bee6118cdcdcf2632df5", 1793307557
+			}
 			for name, replacement := range overlay.Components {
 				c := replacement.Component
 				if c == nil || strings.TrimSuffix(c.Repo, ".git") != "https://github.com/dsx-ai-factory/nvke" {
 					continue
 				}
-				if c.Tag != "v0.22.0" || c.Commit != "400c24fb6465b042be883d6b62472528520d6291" || c.TreeHash != "f3afc02f5c92f4aacda3a1655836a91bef093bfe" || c.SourceDate != 1792548398 {
-					t.Fatalf("%s replaces the v0.22.0 source identity", name)
+				if c.Tag != tag || c.Commit != commit || c.TreeHash != tree || c.SourceDate != epoch {
+					t.Fatalf("%s replaces the reviewed %s source identity", name, tag)
 				}
 			}
 		})
+	}
+}
+
+// NVKE v0.23.0's image-input composer requires a doca-ovs archive whose debs
+// match the image's Ubuntu series.
+func TestNVKEImageInputsSelectSeriesDOCAOVS(t *testing.T) {
+	for _, directory := range []string{"node-images/release", "node-images/diagnostic"} {
+		t.Run(directory, func(t *testing.T) {
+			bound, err := BindContext(t.Context(), Dir(filepath.Join("../../../inputs/catalogs", directory)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry, err := readRegistry(bound)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := registry.Components["nvke-image-inputs"].Materials["doca-ovs"]; got != "nvke-doca-ovs" {
+				t.Fatalf("image inputs bind doca-ovs to %q", got)
+			}
+			if got := registry.Components["nvke-doca-ovs"].Source; got != "nvke-doca-ovs-source" {
+				t.Fatalf("DOCA producer selects source %q", got)
+			}
+			vendor := strings.Join(registry.Sources["nvke-doca-ovs-source"].VendorCommand, "\n")
+			if !strings.Contains(vendor, "make -C os-image/packages/doca-ovs debs") || !strings.Contains(vendor, "UBUNTU_SERIES=26.04") {
+				t.Fatal("release DOCA source must stage NVKE's locked Ubuntu 26.04 debs")
+			}
+		})
+	}
+	overlay, err := LoadOverlayContext(t.Context(), "../../../inputs/catalogs/node-images/variants/ubuntu24.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := overlay.Components["nvke-doca-ovs"].Component
+	if replacement == nil || !strings.Contains(strings.Join(replacement.VendorCommand, "\n"), "UBUNTU_SERIES=24.04") {
+		t.Fatal("Ubuntu 24 images must stage the 24.04 DOCA debs")
 	}
 }
 

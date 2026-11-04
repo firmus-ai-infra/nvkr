@@ -5,6 +5,7 @@ package factory
 
 import (
 	"path/filepath"
+	"reflect"
 
 	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/catalog"
 	authored "github.com/dsx-ai-factory/nvkr/pkg/nvkr/definition"
@@ -21,6 +22,16 @@ func admitInputs(definition authored.Definition, environment authored.Environmen
 		return err
 	}
 	for _, output := range definition.Outputs {
+		if output.Format == authored.OutputDebianPackage && (environment.Publication != nil || environment.Signing != nil) {
+			return e.New(e.CodeEngineCapability, "Debian publication/signing requires final-byte archive evidence joins")
+		}
+
+		if output.Format == authored.OutputDebianPackage && definition.SBOMTool != "" {
+			return e.New(e.CodeEngineCapability, "Debian dependency inspection is not supported for raw package outputs")
+		}
+		if output.Format == authored.OutputDebianPackage && (len(environment.GitHubRunners) != 0 || environment.GitHubARC != "" || environment.GitHubDevelopment) {
+			return e.New(e.CodeEngineCapability, "raw Debian outputs currently require local execution")
+		}
 		if output.Platform == "darwin/arm64" && (environment.Signing != nil || environment.Publication != nil || len(environment.GitHubRunners) != 0 || environment.GitHubARC != "" || environment.GitHubDevelopment) {
 			return e.New(e.CodeEngineCapability, "native Mac executable acquisition currently requires a local environment without signing or publication")
 		}
@@ -93,7 +104,7 @@ func selectedTools(definition authored.Definition, environment authored.Environm
 		if pin.Platform != environment.UtilityPlatform {
 			return e.New(e.CodeEngineCapability, "tool %q platform %s does not match utility platform %s", name, pin.Platform, environment.UtilityPlatform)
 		}
-		if previous, exists := tools[name]; exists && previous != pin {
+		if previous, exists := tools[name]; exists && !reflect.DeepEqual(previous, pin) {
 			return e.New(e.CodeUnpinnedSource, "selected catalog tool %q has conflicting pins", name)
 		}
 		tools[name] = pin

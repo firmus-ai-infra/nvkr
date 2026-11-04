@@ -42,14 +42,17 @@ func githubPrivateToolchain(plan *Plan, image string) bool {
 	// Development publication does not move already-pinned native toolchains.
 	// Only the maintained NVKR development namespace may prepare the
 	// toolchain roots, using the separate read-only registry credential.
-	if plan.Environment.GitHubDevelopment && prefix == "ghcr.io/dsx-ai-factory/nvkr/development" {
+	if plan.Environment.GitHubDevelopment && (prefix == "ghcr.io/dsx-ai-factory/nvkr/development" || strings.HasPrefix(prefix, "ghcr.io/dsx-ai-factory/nvkr/development-")) {
 		return strings.HasPrefix(image, "ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/")
 	}
 	// Maintained disk-family and nightly outputs reuse the published M2 tooling.
 	// Output publication does not relocate those subjects or authorize other owners.
+	// A new entry also needs rows in TestPrivateToolchainPublicationBoundary and,
+	// for a disk family, nvkeDiskFamily in the split tests.
 	switch prefix {
 	case "ghcr.io/dsx-ai-factory/nvkr/m2-candidate",
 		"ghcr.io/dsx-ai-factory/nvkr/m2-candidate/disks",
+		"ghcr.io/dsx-ai-factory/nvkr/m2-candidate/disks-ubuntu24",
 		"ghcr.io/dsx-ai-factory/nvkr/nightly/nvke-nightly-arm64",
 		"ghcr.io/dsx-ai-factory/nvkr/nightly/nvke-nightly-upstream-ovn-arm64":
 		return strings.HasPrefix(image, "ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/")

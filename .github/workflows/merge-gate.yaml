@@ -26,9 +26,11 @@
 #
 # TO ADD A NEW GATING CHECK
 #   1. Add a real job + companion -skip job with inverse `if:` conditions.
-#   2. Add both job names to the gate job's `needs:` list.
-#   3. Add a make target for it, so `make check` stays equal to CI
-#      (CONTRIBUTING.md, "Local development equals CI").
+#   2. Add both job names to the gate job's `needs:` list and its check/skip
+#      pair table. The gate rejects a dependency the table does not classify.
+#   3. Run it as a make target listed in the Makefile's CI_CHECKS, so
+#      `make ci-check` stays equal to CI (CONTRIBUTING.md, "Local development
+#      equals CI"). internal/cicontract fails when the two lists differ.
 #   No ruleset change is needed — "gate" is the only required check.
 #
 # A GATE MUST WATCH ITS OWN INPUTS
@@ -130,6 +132,8 @@ jobs:
               - 'inputs/**'
               # Watched so definitions-location-check runs on any re-addition.
               - 'definitions/**'
+              # Watched so reconciliation-location-check runs on any re-addition.
+              - 'docs/adr/reconciliation.md'
               - 'docs/examples/**'
               - 'scripts/**'
               - 'demos/**'
@@ -155,6 +159,10 @@ jobs:
               - '.github/actionlint.yaml'
               - '.github/workflows/**'
               - '.github/actions/**'
+              # The pinned linter and its make recipe.
+              - 'toolchains/actionlint/**'
+              - 'Makefile'
+              - '.go-version'
             pipeline:
               # Everything `run generate` consumes or emits, plus the files that
               # define the check itself, so a change to the gate cannot skip the
@@ -202,16 +210,19 @@ jobs:
             docs:
               # The published pages, their navigation and the Fern site
               # configuration, plus the files that define the check itself: the
-              # MDX checker, the Makefile recipe, and this workflow. A page can
+              # MDX checker, the locked Fern CLI, the Makefile recipe, and this
+              # workflow. A page can
               # break the site through any page it links to, so the whole docs
               # tree is watched rather than only the pages listed in the nav.
               - 'docs/**'
               - 'fern/**'
               - 'tools/check-docs-mdx'
+              - 'tools/fern/**'
               - 'Makefile'
               - '.github/workflows/merge-gate.yaml'
 
-  # Repository checks — the same gates `make check` runs locally, plus build
+  # Repository checks — the same gates `make check` runs locally, plus build.
+  # `make ci-check` runs these and every other locally reproducible job below.
 
   check:
     needs: [check-paths]
@@ -233,6 +244,9 @@ jobs:
 
       - name: definitions-location-check
         run: make definitions-location-check
+
+      - name: reconciliation-location-check
+        run: make reconciliation-location-check
 
       - name: license-header-check
         run: make license-header-check
@@ -319,7 +333,9 @@ jobs:
     if: needs.check-paths.outputs.code == 'true'
     # Tests need disk-backed /tmp and GNU tools, unlike Ubuntu 26.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # The demo shard passed in 233s on a cold hosted runner; allow setup and
+    # result retention to finish within the same bounded job deadline.
+    timeout-minutes: 10
     strategy:
       # Keep every shard's diagnostics when another fails. The aggregate gate
       # requires the entire matrix to succeed.
@@ -386,37 +402,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install actionlint
-        # Pinned by version, with the downloaded binary verified against the
-        # upstream-published checksum file. The upstream one-liner installer
-        # pipes a script from the default branch into bash and downloads the
-        # binary with no checksum verification.
-        env:
-          ACTIONLINT_VERSION: '1.7.12'
-        run: |
-          set -euo pipefail
-          BASE="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}"
-          TAR="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          TMP="$(mktemp -d)"
-          curl -fsSL -o "${TMP}/${TAR}" "${BASE}/${TAR}"
-          curl -fsSL -o "${TMP}/checksums.txt" "${BASE}/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
-          EXPECTED=$(awk -v t="${TAR}" '$2 == t {print $1}' "${TMP}/checksums.txt")
-          if [[ -z "${EXPECTED}" ]]; then
-            echo "::error::no checksum entry for ${TAR} in upstream checksums.txt"
-            exit 1
-          fi
-          ACTUAL=$(sha256sum "${TMP}/${TAR}" | awk '{print $1}')
-          if [[ "${ACTUAL}" != "${EXPECTED}" ]]; then
-            echo "::error::actionlint checksum mismatch: expected ${EXPECTED}, got ${ACTUAL}"
-            exit 1
-          fi
-          tar -xzf "${TMP}/${TAR}" -C "${TMP}" actionlint
-          mv "${TMP}/actionlint" "${PWD}/actionlint"
-          rm -rf "${TMP}"
-          echo "${PWD}" >> "$GITHUB_PATH"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          cache: false
 
-      - name: Run actionlint
-        run: actionlint -color
+      # Builds the version and go.sum pinned in toolchains/actionlint, the
+      # same binary `make ci-check` runs locally.
+      - name: actionlint
+        run: make actionlint
 
   actionlint-skip:
     needs: [check-paths]
@@ -543,9 +537,9 @@ jobs:
   #
   # `make docs-check` runs the MDX safety checker, `fern check`, `fern docs md
   # check` and `fern docs broken-links`. No secrets are used, so it is safe on
-  # fork PRs. The Fern CLI is intentionally installed unpinned (`@latest`), so
-  # an upstream Fern release can fail this check without a change in this
-  # repository; Node itself is pinned by setup-node.
+  # fork PRs. `make fern-install` installs the Fern CLI from its integrity-locked
+  # tools/fern dependency set, the same install path used locally and by the
+  # publish and preview workflows; Node itself is pinned by setup-node.
 
   docs:
     needs: [check-paths]
@@ -563,7 +557,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install Fern CLI
-        run: npm install -g fern-api@latest
+        run: make fern-install
 
       - name: Check Fern docs
         run: make docs-check
@@ -577,6 +571,8 @@ jobs:
       - run: echo "No docs or Fern inputs changed — docs check not required"
 
   # Static analysis (CodeQL)
+  #
+  # Provider-only: `make ci-check` cannot reproduce the hosted CodeQL analysis.
   #
   # Uploading results needs `security-events: write`. On a private or internal
   # repository that also requires GitHub Advanced Security; on a public one it
@@ -674,39 +670,72 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check gate
+        # Each `if:` above is mirrored here: the fork predicates exactly as
+        # workflows-regen and analyze evaluate them.
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          SAME_REPOSITORY: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          FORK_PULL_REQUEST: ${{ github.event.pull_request.head.repo.fork == true }}
         run: |
           set -euo pipefail
           echo "Gate results:"
-          echo '${{ toJSON(needs) }}' | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
 
           # check-paths must succeed — if it fails, all downstream jobs are
           # skipped (not failed), which would silently pass the gate.
-          if [ "${{ needs.check-paths.result }}" != "success" ]; then
-            echo "::error::check-paths did not succeed (result: ${{ needs.check-paths.result }})"
+          paths_result=$(jq -r '.["check-paths"].result' <<<"$NEEDS")
+          if [ "$paths_result" != "success" ]; then
+            echo "::error::check-paths did not succeed (result: $paths_result)"
             exit 1
           fi
 
-          # A successful matrix means every test shard passed. Never treat a
-          # skipped code job as success when the classifier required it.
-          if [ "${{ needs.check-paths.outputs.code }}" = 'true' ]; then
-            echo '${{ toJSON(needs) }}' | jq -e \
-              '[.check, .lint, .vulnerabilities, .tests] | all(.result == "success")' >/dev/null
-          elif [ "${{ needs.check-paths.outputs.code }}" = 'false' ]; then
-            echo '${{ toJSON(needs) }}' | jq -e \
-              '.["check-skip"].result == "success" and ([.check, .lint, .vulnerabilities, .tests] | all(.result == "skipped"))' >/dev/null
-          else
-            echo '::error::Code classification must be true or false'
+          # Every other dependency belongs to exactly one check/skip pair. The
+          # classifier selects one side: it must succeed and the other must be
+          # skipped. Both skipped means required work never ran. A missing job,
+          # any other result, a classifier value other than true/false, or a
+          # dependency absent from this table fails the gate.
+          if ! violations=$(jq -r \
+            --arg same_repository "$SAME_REPOSITORY" \
+            --arg fork_pull_request "$FORK_PULL_REQUEST" '
+            def flag($value; $label):
+              if $value == "true" then true
+              elif $value == "false" then false
+              else error("\($label) must be true or false, got \($value | tojson)")
+              end;
+            . as $needs
+            | $needs["check-paths"].outputs as $paths
+            | flag($same_repository; "same-repository status") as $same_repository
+            | flag($fork_pull_request; "fork status") as $fork_pull_request
+            | [
+                {skip: "check-skip", jobs: ["check", "lint", "vulnerabilities", "tests"],
+                 run: flag($paths.code; "code classification")},
+                {skip: "actionlint-skip", jobs: ["actionlint"],
+                 run: flag($paths.actions; "actions classification")},
+                {skip: "workflows-regen-skip", jobs: ["workflows-regen"],
+                 run: (flag($paths.pipeline; "pipeline classification") and $same_repository)},
+                {skip: "notices-regen-skip", jobs: ["notices-regen"],
+                 run: flag($paths.notices; "notices classification")},
+                {skip: "docs-skip", jobs: ["docs"],
+                 run: flag($paths.docs; "docs classification")},
+                {skip: "analyze-skip", jobs: ["analyze"],
+                 run: (flag($paths.code; "code classification") and ($fork_pull_request | not))}
+              ] as $pairs
+            | ($pairs | map(.skip, .jobs[]) + ["check-paths"]) as $classified
+            | ($needs | keys - $classified | .[] | "\(.): dependency is not classified by the gate"),
+              ($pairs[]
+                | .run as $run
+                | (.jobs[] | [., (if $run then "success" else "skipped" end)]),
+                  [.skip, (if $run then "skipped" else "success" end)]
+                | select($needs[.[0]].result != .[1])
+                | "\(.[0]): result \($needs[.[0]].result // "missing"), want \(.[1])")
+          ' <<<"$NEEDS"); then
+            echo "::error::Gate inputs could not be classified"
             exit 1
           fi
-
-          # Fail if ANY other dependency failed or was cancelled.
-          # Skipped is OK — it means the inverse job ran instead.
-          # Split the parse from the predicate so a jq error aborts under
-          # `set -e` rather than being read as "no failures" and passing.
-          failed=$(echo '${{ toJSON(needs.*.result) }}' \
-            | jq -r 'map(select(. == "failure" or . == "cancelled")) | length')
-          if [ "$failed" -gt 0 ]; then
-            echo "::error::One or more gating checks failed or were cancelled"
+          if [ -n "$violations" ]; then
+            while IFS= read -r violation; do
+              echo "::error::$violation"
+            done <<<"$violations"
             exit 1
           fi
 

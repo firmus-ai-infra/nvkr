@@ -35,7 +35,7 @@
       "name": "capnico-controller-arm64",
       "platform": "linux/arm64",
       "catalog": {
-        "base": "../../catalogs/capnico/local-arm64"
+        "base": "../../catalogs/capnico/local"
       },
       "components": [
         "capnico-controller"
@@ -156,6 +156,7 @@
         "nvke-agent",
         "nvke-cni-calico",
         "nvke-cni-ovn",
+        "nvke-doca-ovs",
         "nvke-image-inputs",
         "nvke-kubeadm-distro",
         "nvke-node-image",
