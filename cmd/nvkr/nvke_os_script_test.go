@@ -531,14 +531,8 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 						t.Fatalf("Ubuntu 24 selection lost its compatible agent toolchain: output=%s, agent=%s", build.Name, agent)
 					}
 					patches := build.CatalogSnapshot.Components[diskRoot].Patches
-					if arch == "amd64" {
-						if len(patches) != 1 || patches[0].Name != "uefi-shell-fallback-amd64.patch" ||
-							!strings.Contains(patches[0].Content, "BOOTX64.EFI") ||
-							strings.Contains(patches[0].Content, "BOOTAA64.EFI") {
-							t.Fatalf("frozen AMD64 Ubuntu 24 disk lost its UEFI shell fallback: %+v", patches)
-						}
-					} else if len(patches) != 0 {
-						t.Fatal("frozen ARM64 disk must preserve stock upstream source")
+					if len(patches) != 0 {
+						t.Fatalf("frozen Ubuntu 24 disk must preserve stock upstream source: %+v", patches)
 					}
 					for _, name := range []string{"native-toolchains.yaml", "ubuntu24.json"} {
 						if _, err := os.Stat(filepath.Join(root, ".nvkr/inputs/test-attempt", name)); err != nil {
@@ -560,7 +554,12 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					if err != nil {
 						t.Fatal(err)
 					}
-					const ubuntuBase = "build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@sha256:"
+					// The nested BuildKit does not trust the host CA store, so each
+					// recipe keeps exactly one pinned Ubuntu base on Docker Hub.
+					ubuntuBase := "build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@sha256:"
+					if ubuntu == "24.04" {
+						ubuntuBase = "build-arg:BASE_IMAGE=docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
+					}
 					if !strings.Contains(string(registry), "harbor.cbr01.in.firmus.co/dockerhub/moby/buildkit@sha256:") ||
 						!strings.Contains(string(registry), ubuntuBase) {
 						t.Fatal("frozen catalog did not keep the host Harbor pulls and the nested Ubuntu base")

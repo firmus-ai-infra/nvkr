@@ -5,8 +5,6 @@ package lifecycle
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -103,12 +101,7 @@ func TestNVKEUbuntu24NativeDiskSelections(t *testing.T) {
 						node.Disk == nil || node.ExecutionBinding == nil || node.Requirements == nil {
 						t.Fatal("Ubuntu 24 disk lost its source-owned native Packer contract")
 					}
-					if node.Component == "nvke-node-image-amd64" && variant.output == "image" {
-						if len(node.Patches) != 1 || node.Patches[0].Name != "uefi-shell-fallback-amd64.patch" ||
-							!strings.Contains(node.Patches[0].Content, "BOOTX64.EFI") {
-							t.Fatalf("AMD64 Ubuntu 24 disk node lost its UEFI fallback patch: %+v", node.Patches)
-						}
-					} else if len(node.Patches) != 0 {
+					if len(node.Patches) != 0 {
 						t.Fatalf("Ubuntu 24 disk node unexpectedly carries patches: %+v", node.Patches)
 					}
 					if node.Packer.BuildName != "nvke-node-"+variant.source+".qemu.nvke-"+variant.source ||

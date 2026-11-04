@@ -15,6 +15,7 @@ Build the locked local toolchain, freeze the exact authored recipe under
 .nvkr/inputs/ATTEMPT, and execute one local non-FDE NVKE OS build on native Linux
 with Docker and KVM. Docker Hub image references the host daemon pulls are
 rewritten to harbor.cbr01.in.firmus.co/dockerhub. The OVN image's Ubuntu base
+(UBUNTU_BASE_IMAGE, or the pinned BASE_IMAGE for Ubuntu 24.04)
 stays on Docker Hub because nested BuildKit does not use the host certificate
 store. This is a development bootstrap route.
 
@@ -41,9 +42,20 @@ for old, new in (
     updated = updated.replace(old, new)
 # Nested BuildKit fetches this base itself. The host Docker CA store does not
 # apply there, so this one pin stays on Docker Hub.
-allowed = f"build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@{ubuntu_digest}"
-if "docker.io/" in updated.replace(allowed, ""):
-    raise SystemExit(f"docker hub reference remains in {path}")
+allowed = (
+    f"build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@{ubuntu_digest}",
+    # Ubuntu 24.04 OVN image (Dockerfile.ubuntu.nv) pins its base by tag and digest.
+    "build-arg:BASE_IMAGE=docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55",
+)
+remainder = updated
+for item in allowed:
+    remainder = remainder.replace(item, "")
+if "docker.io/" in remainder:
+    # Name the first offending line so a CI log shows the cause.
+    offender = next(
+        (line.strip() for line in remainder.splitlines() if "docker.io/" in line), ""
+    )
+    raise SystemExit(f"ERROR: docker hub reference remains in {path}: {offender}")
 if re.search(r"(?<![\w./-])moby/buildkit@sha256:", updated):
     raise SystemExit(f"unrewritten buildkit reference remains in {path}")
 if re.search(r"(?<![\w./-])golang@sha256:", updated):
