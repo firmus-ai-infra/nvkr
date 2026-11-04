@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Upload one Ubuntu 24.04.5 AMD64 node QCOW2 to RustFS with mc.
+# Upload one Ubuntu 24.04.5 ARM64 node QCOW2 to RustFS with mc.
 # S3_ACCESS_KEY and S3_SECRET_KEY come from the CircleCI nico-harbor context.
 # The job sets S3_ENDPOINT, S3_BUCKET, and S3_PREFIX. This script does not
 # create the bucket or change its access policy. The three object names are
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 qcow="${1:?usage: scripts/push-node-image-s3.sh <qcow2>}"
-name="nvke-node-image-ubuntu24-amd64"
+name="nvke-node-image-ubuntu24-arm64"
 
 : "${S3_ENDPOINT:?S3_ENDPOINT is required}"
 : "${S3_BUCKET:?S3_BUCKET is required}"

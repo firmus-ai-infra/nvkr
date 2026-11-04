@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Boot the finished Ubuntu 24 AMD64 QCOW2 with NVKE's boot-smoke.sh.
+# Boot the finished Ubuntu 24 ARM64 QCOW2 with NVKE's boot-smoke.sh.
 # The result is a diagnostic guest boot. It does not authenticate the
 # toolchain or the disk, and it does not qualify the Run.
 
@@ -18,12 +18,12 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 attempt="circleci-${CIRCLE_BUILD_NUM}"
-qcow=".nvkr/runs/${attempt}/outputs/nvke-node-image-ubuntu24-amd64.qcow2"
+qcow=".nvkr/runs/${attempt}/outputs/nvke-node-image-ubuntu24-arm64.qcow2"
 plan=".nvkr/runs/${attempt}/.runner/plan.json"
 nvke=".nvkr/nvke-efi-src"
 smoke="${nvke}/os-image/packer/scripts/boot-smoke.sh"
 log_dir=".nvkr/evidence"
-log="${log_dir}/boot-smoke-amd64.log"
+log="${log_dir}/boot-smoke-arm64.log"
 
 [[ -f "${qcow}" ]] || { echo "missing built disk ${qcow}" >&2; exit 1; }
 [[ -f "${plan}" ]] || { echo "missing executable Plan ${plan}" >&2; exit 1; }
@@ -47,8 +47,8 @@ observed="$(docker image inspect --format '{{.Id}}' "${image}")" || {
 }
 [[ "${observed}" == "${image}" ]] || { echo "observed toolchain image does not match the Plan" >&2; exit 1; }
 
-mkdir -p "${log_dir}" ".nvkr/boot-smoke/amd64"
-identity_dir="${PWD}/.nvkr/boot-smoke-identity/amd64"
+mkdir -p "${log_dir}" ".nvkr/boot-smoke/arm64"
+identity_dir="${PWD}/.nvkr/boot-smoke-identity/arm64"
 install -d -m 0700 "${identity_dir}"
 printf 'nvkr:x:%s:%s:NVKR Builder:/work:/bin/sh\n' "$(id -u)" "$(id -g)" >"${identity_dir}/passwd"
 printf 'nvkr:x:%s:\n' "$(id -g)" >"${identity_dir}/group"
@@ -62,10 +62,10 @@ docker run --rm --pull=never --network=none --read-only --cap-drop=all \
   --mount "type=bind,src=${identity_dir}/passwd,dst=/etc/passwd,readonly" \
   --mount "type=bind,src=${identity_dir}/group,dst=/etc/group,readonly" \
   --volume "${PWD}/${nvke}:/nvke:ro" \
-  --volume "${PWD}/${qcow}:/nvke-node-image-ubuntu24-amd64.qcow2:ro" \
-  --volume "${PWD}/.nvkr/boot-smoke/amd64:/work:rw" \
+  --volume "${PWD}/${qcow}:/nvke-node-image-ubuntu24-arm64.qcow2:ro" \
+  --volume "${PWD}/.nvkr/boot-smoke/arm64:/work:rw" \
   --entrypoint bash "${image}" -ec '
     ssh-keygen -q -t ed25519 -N "" -f /work/id_ed25519
-    QCOW=/nvke-node-image-ubuntu24-amd64.qcow2 SSH_KEY=/work/id_ed25519 REQUIRE_ACCELERATION=1 TMPDIR=/work \
+    QCOW=/nvke-node-image-ubuntu24-arm64.qcow2 SSH_KEY=/work/id_ed25519 REQUIRE_ACCELERATION=1 TMPDIR=/work \
       /nvke/os-image/packer/scripts/boot-smoke.sh
   ' 2>&1 | tee "${log}"

@@ -2,31 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Customer-owned CircleCI config. NVKR does not generate this file.
-# build_nvkectl, build_node_image, publish_node_image, build_controller_image,
-# publish_controller_image, build_charts, and publish_charts each control only
-# their own work. node-os-image builds the Ubuntu 24.04.5 AMD64 QCOW2.
-# publish_node_image uploads that disk and does not start a job by itself.
-# build_controller_image starts only the controller-image workflow.
-# publish_controller_image pushes that image and does not start a job.
-# build_charts starts only the chart workflow.
-# publish_charts pushes that Run's charts and bound controller image, and does not start a job.
-# nvkectl and node-os-image do not build the controller image or charts.
-# node-os-image also builds qcow-imager.efi from firmus-ai-infra/nvke and uploads it
-# beside the QCOW2. That step does not build the node disk. After the disk is
-# recorded, the job runs NVKE boot-smoke.sh. That boot is diagnostic.
-# NVKR registry publication stays out. Harbor pushes use the publish parameters.
+# This pipeline builds one artifact: the Ubuntu 24.04.5 ARM64 node QCOW2.
+# build_node_image starts that job. publish_node_image uploads the disk and
+# does not start a job by itself. The job refuses uid 0. Its last step deletes
+# the working directory on success and on failure. NVKR registry publication stays out.
 version: 2.1
 
 parameters:
-  # Plan only, even on main.
-  dry_run:
-    type: boolean
-    default: false
-  # Build nvkectl. Does not affect the node-image job.
-  build_nvkectl:
-    type: boolean
-    default: false
-  # Build and record the Ubuntu 24.04.5 AMD64 node image. Does not affect nvkectl.
+  # Build and record the Ubuntu 24.04.5 ARM64 node image.
   build_node_image:
     type: boolean
     default: true
@@ -34,362 +17,19 @@ parameters:
   publish_node_image:
     type: boolean
     default: true
-  # Build the AMD64 controller image. Does not build charts or the node image.
-  build_controller_image:
-    type: boolean
-    default: false
-  # Push the image-only attempt. This step runs only inside controller-image.
-  publish_controller_image:
-    type: boolean
-    default: false
-  # Build the AMD64 controller, NKTP, and OVN charts. Does not start the image-only workflow.
-  build_charts:
-    type: boolean
-    default: false
-  # Push the chart attempt, including the controller image that attempt bound.
-  # This step runs only inside the chart workflow.
-  publish_charts:
-    type: boolean
-    default: false
 
 executors:
-  controller:
+  node-image:
     machine: true
-    resource_class: firmus/nvkr
-    environment:
-      GOTOOLCHAIN: local
-      IMAGE_REGISTRY: harbor.cbr01.in.firmus.co/nvke
-      CHART_REGISTRY: harbor.cbr01.in.firmus.co/nvke/charts
-      HARBOR_HOST: harbor.cbr01.in.firmus.co
-
-commands:
-  install-pinned-go:
-    description: Install the Go version from .go-version for linux/amd64
-    steps:
-      - run:
-          name: Install the pinned Go toolchain
-          command: |
-            set -euo pipefail
-            if [ "$(uname -m)" != "x86_64" ]; then
-              echo "linux/amd64 outputs need an amd64 machine" >&2
-              exit 1
-            fi
-            go_version="$(tr -d '[:space:]' < .go-version)"
-            if [ "${go_version}" != "1.27.3" ]; then
-              echo "expected Go 1.27.3 in .go-version, found ${go_version}" >&2
-              exit 1
-            fi
-            tarball="go${go_version}.linux-amd64.tar.gz"
-            # go.dev/dl/<file>.sha256 is an HTML page. The checksum is the plain digest on dl.google.com.
-            curl -fsSL -o "/tmp/${tarball}" "https://dl.google.com/go/${tarball}"
-            curl -fsSL -o "/tmp/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
-            digest="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
-            case "${digest}" in
-              *[!0-9a-f]*|"")
-                echo "Go checksum file is not a hex digest" >&2
-                exit 1
-                ;;
-            esac
-            if [ "${#digest}" -ne 64 ]; then
-              echo "Go checksum file is not a SHA-256 digest" >&2
-              exit 1
-            fi
-            echo "${digest}  /tmp/${tarball}" | sha256sum -c -
-            # The circleci user has no passwordless sudo. ${HOME}/go is the default
-            # GOPATH and can contain root-owned files, so the tarball is unpacked
-            # under ${HOME}/.local. The toolchain stays out of the module cache.
-            root="${HOME}/.local"
-            mkdir -p "${root}" "${HOME}/.cache/go-mod" "${HOME}/.cache/go-build" "${HOME}/.cache/gopath"
-            rm -rf "${root}/go"
-            tar -C "${root}" -xzf "/tmp/${tarball}"
-            echo 'export PATH="${HOME}/.local/go/bin:${PATH}"' >> "${BASH_ENV}"
-            echo 'export GOROOT="${HOME}/.local/go"' >> "${BASH_ENV}"
-            echo 'export GOPATH="${HOME}/.cache/gopath"' >> "${BASH_ENV}"
-            echo 'export GOMODCACHE="${HOME}/.cache/go-mod"' >> "${BASH_ENV}"
-            echo 'export GOCACHE="${HOME}/.cache/go-build"' >> "${BASH_ENV}"
-            echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
-            echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            test "$(go env GOROOT)" = "${HOME}/.local/go"
-            test "$(go env GOVERSION)" = "go${go_version}"
-            test "$(go env GOHOSTARCH)" = "amd64"
-  admit-amd64-docker:
-    description: Require Docker on the amd64 build host
-    steps:
-      - run:
-          name: Admit the local build host
-          command: |
-            set -euo pipefail
-            if [ "$(uname -m)" != "x86_64" ]; then
-              echo "linux/amd64 outputs need an amd64 machine" >&2
-              exit 1
-            fi
-            if ! docker info >/dev/null 2>&1; then
-              echo "docker is not available" >&2
-              exit 1
-            fi
-  reclaim-workspace:
-    description: Give root-owned checkout files back to the runner user
-    steps:
-      - run:
-          name: Reclaim root-owned workspace files
-          when: always
-          command: |
-            set -euo pipefail
-            # The circleci user has no passwordless sudo. Isolated oci-hermetic
-            # builds bind-mount this checkout and run as root, so mkdir leaves
-            # directories the next task cannot unlink. Do not delete the tree:
-            # this runner keeps the checkout, including a node image from an
-            # earlier job. chown only this working directory. --userns=host is
-            # required: a remapped container root cannot change files owned by
-            # the host's real root, which is what blocks the next task.
-            case "${PWD}" in
-              /*) ;;
-              *)
-                echo "workspace path is not absolute" >&2
-                exit 1
-                ;;
-            esac
-            if [ "${PWD}" = "/" ]; then
-              echo "refusing to reclaim the host root" >&2
-              exit 1
-            fi
-            if ! docker info >/dev/null 2>&1; then
-              echo "docker is unavailable; root-owned workspace files cannot be reclaimed" >&2
-              exit 1
-            fi
-            uid="$(id -u)"
-            gid="$(id -g)"
-            candidates="$(docker image ls --no-trunc --format '{{.ID}}' | awk 'NF && !seen[$0]++')"
-            if [ -z "${candidates}" ]; then
-              echo "no local image provides chown; root-owned workspace files cannot be reclaimed" >&2
-              exit 1
-            fi
-            image=""
-            rest="${candidates}"
-            while [ -n "${rest}" ]; do
-              candidate="${rest%%$'\n'*}"
-              case "${rest}" in
-                *$'\n'*) rest="${rest#*$'\n'}" ;;
-                *) rest="" ;;
-              esac
-              [ -n "${candidate}" ] || continue
-              # Prove this image's chown runs under the same restrictions as the
-              # reclaim. --pull=never stays on images already loaded by the build.
-              if docker run --rm --pull=never --network=none --read-only \
-                --userns=host \
-                --tmpfs /probe:rw,nosuid,nodev,mode=0700 \
-                --user 0:0 \
-                --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
-                --security-opt no-new-privileges \
-                --entrypoint chown \
-                "${candidate}" "${uid}:${gid}" /probe >/dev/null 2>&1; then
-                image="${candidate}"
-                break
-              fi
-            done
-            if [ -z "${image}" ]; then
-              echo "no local image provides chown; root-owned workspace files cannot be reclaimed" >&2
-              exit 1
-            fi
-            if [ -f "${PWD}/.nvkr/preserve-workspace" ]; then
-              echo "boot smoke failed; leaving ${PWD} in place"
-              # A root-owned directory the runner cannot empty stops the task
-              # cleanup from removing the built disk. Reclaim would make that
-              # tree deletable, so this path does not chown the workspace.
-              docker run --rm --pull=never --network=none --read-only \
-                --userns=host \
-                --user 0:0 \
-                --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
-                --security-opt no-new-privileges \
-                --entrypoint sh \
-                -v "${PWD}:/work" \
-                "${image}" -c 'mkdir -p /work/.nvkr/preserve-root && chmod 755 /work/.nvkr/preserve-root && : > /work/.nvkr/preserve-root/keep && chmod 644 /work/.nvkr/preserve-root/keep'
-              exit 0
-            fi
-            printf 'reclaiming workspace ownership with %s\n' "${image}"
-            docker run --rm --pull=never --network=none --read-only \
-              --userns=host \
-              --user 0:0 \
-              --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=FOWNER \
-              --security-opt no-new-privileges \
-              --entrypoint chown \
-              -v "${PWD}:/work" \
-              "${image}" -R "${uid}:${gid}" /work
-            remaining="$(find "${PWD}" -xdev \( ! -user "${uid}" -o ! -group "${gid}" \) -print)"
-            if [ -n "${remaining}" ]; then
-              printf '%s\n' "${remaining}" | head -n 20 >&2
-              echo "workspace still contains files the next task cannot delete" >&2
-              exit 1
-            fi
+    resource_class: firmus/arm64-native
 
 jobs:
-  build-artefacts:
-    executor: controller
-    parameters:
-      execute:
-        type: boolean
-        default: true
-    steps:
-      - checkout
-
-      - run:
-          name: Install the pinned Go toolchain
-          command: |
-            set -euo pipefail
-            if [ "$(uname -m)" != "x86_64" ]; then
-              echo "nvkectl is linux/amd64 and needs an amd64 machine" >&2
-              exit 1
-            fi
-            go_version="$(tr -d '[:space:]' < .go-version)"
-            if [ "${go_version}" != "1.27.3" ]; then
-              echo "expected Go 1.27.3 in .go-version, found ${go_version}" >&2
-              exit 1
-            fi
-            tarball="go${go_version}.linux-amd64.tar.gz"
-            # go.dev/dl/<file>.sha256 is an HTML page. The checksum is the plain digest on dl.google.com.
-            curl -fsSL -o "/tmp/${tarball}" "https://dl.google.com/go/${tarball}"
-            curl -fsSL -o "/tmp/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
-            digest="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
-            case "${digest}" in
-              *[!0-9a-f]*|"")
-                echo "Go checksum file is not a hex digest" >&2
-                exit 1
-                ;;
-            esac
-            if [ "${#digest}" -ne 64 ]; then
-              echo "Go checksum file is not a SHA-256 digest" >&2
-              exit 1
-            fi
-            echo "${digest}  /tmp/${tarball}" | sha256sum -c -
-            # The circleci user has no passwordless sudo. ${HOME}/go is the default
-            # GOPATH and can contain root-owned files, so the tarball is unpacked
-            # under ${HOME}/.local. The toolchain stays out of the module cache.
-            root="${HOME}/.local"
-            mkdir -p "${root}" "${HOME}/.cache/go-mod" "${HOME}/.cache/go-build" "${HOME}/.cache/gopath"
-            rm -rf "${root}/go"
-            tar -C "${root}" -xzf "/tmp/${tarball}"
-            echo 'export PATH="${HOME}/.local/go/bin:${PATH}"' >> "${BASH_ENV}"
-            echo 'export GOROOT="${HOME}/.local/go"' >> "${BASH_ENV}"
-            echo 'export GOPATH="${HOME}/.cache/gopath"' >> "${BASH_ENV}"
-            echo 'export GOMODCACHE="${HOME}/.cache/go-mod"' >> "${BASH_ENV}"
-            echo 'export GOCACHE="${HOME}/.cache/go-build"' >> "${BASH_ENV}"
-            echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
-            echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            test "$(go env GOROOT)" = "${HOME}/.local/go"
-            test "$(go env GOVERSION)" = "go${go_version}"
-            test "$(go env GOHOSTARCH)" = "amd64"
-
-      - run:
-          name: Validate the Definition
-          command: |
-            set -euo pipefail
-            unset GITHUB_ACTIONS
-            export PATH="${HOME}/.local/go/bin:${PATH}"
-            export GOROOT="${HOME}/.local/go"
-            export GOPATH="${HOME}/.cache/gopath"
-            export GOMODCACHE="${HOME}/.cache/go-mod"
-            export GOCACHE="${HOME}/.cache/go-build"
-            export GOTOOLCHAIN=local
-            git_version="$(git version | awk '{ print $3 }')"
-            git_major="${git_version%%.*}"
-            git_rest="${git_version#*.}"
-            git_minor="${git_rest%%.*}"
-            git_minor="${git_minor%%[!0-9]*}"
-            if [ "${git_major}" -lt 2 ] || { [ "${git_major}" -eq 2 ] && [ "${git_minor}" -lt 38 ]; }; then
-              echo "git ${git_version} is older than 2.38" >&2
-              exit 1
-            fi
-            command -v make >/dev/null
-            make build
-            bin/nvkr definition validate \
-              --definition .circleci/definition-nvkectl.yaml
-
-      # Planned on every path. The plan describes the Run and does not execute it.
-      - run:
-          name: Plan
-          command: |
-            set -euo pipefail
-            unset GITHUB_ACTIONS
-            export PATH="${HOME}/.local/go/bin:${PATH}"
-            export GOROOT="${HOME}/.local/go"
-            export GOPATH="${HOME}/.cache/gopath"
-            export GOMODCACHE="${HOME}/.cache/go-mod"
-            export GOCACHE="${HOME}/.cache/go-build"
-            export GOTOOLCHAIN=local
-            bin/nvkr run plan \
-              --definition .circleci/definition-nvkectl.yaml \
-              --environment docs/examples/nvke-tutorial/environment-local.yaml
-
-      - when:
-          condition:
-            and:
-              - << parameters.execute >>
-              - not: << pipeline.parameters.dry_run >>
-          steps:
-            - run:
-                name: Admit the local build host
-                command: |
-                  set -euo pipefail
-                  if [ "$(uname -m)" != "x86_64" ]; then
-                    echo "nvkectl is linux/amd64 and needs an amd64 machine" >&2
-                    exit 1
-                  fi
-                  if ! docker info >/dev/null 2>&1; then
-                    echo "docker is not available" >&2
-                    exit 1
-                  fi
-            - run:
-                name: Build nvkectl
-                no_output_timeout: 30m
-                command: |
-                  set -euo pipefail
-                  unset GITHUB_ACTIONS
-                  export PATH="${HOME}/.local/go/bin:${PATH}"
-                  export GOROOT="${HOME}/.local/go"
-                  export GOPATH="${HOME}/.cache/gopath"
-                  export GOMODCACHE="${HOME}/.cache/go-mod"
-                  export GOCACHE="${HOME}/.cache/go-build"
-                  export GOTOOLCHAIN=local
-                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
-                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
-                    exit 1
-                  fi
-                  bin/nvkr run local \
-                    --definition .circleci/definition-nvkectl.yaml \
-                    --environment docs/examples/nvke-tutorial/environment-local.yaml \
-                    --attempt "circleci-${CIRCLE_BUILD_NUM}" \
-                    --ui=plain --jobs 1
-            - run:
-                name: Stage the attempt record
-                when: always
-                command: |
-                  set -euo pipefail
-                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/lifecycle.json"
-                  # Stage inside this job's own working directory. The runner keeps /tmp
-                  # between jobs, so a shared /tmp path can hold files this user cannot write.
-                  mkdir -p nvkr-artifacts
-                  if [ -f "${src}" ]; then
-                    cp "${src}" nvkr-artifacts/lifecycle.json
-                  else
-                    printf 'attempt record missing: %s\n' "${src}" > nvkr-artifacts/lifecycle-missing.txt
-                    exit 1
-                  fi
-            - store_artifacts:
-                path: nvkr-artifacts
-                destination: nvkr-attempt
-                when: always
-            - reclaim-workspace
-
   build-node-os-image:
-    executor: controller
+    executor: node-image
     environment:
       S3_ENDPOINT: https://s3-console.cbr01.in.firmus.co/
       S3_BUCKET: nvke
-      S3_PREFIX: nvke-node-image-ubuntu24-amd64
+      S3_PREFIX: nvke-node-image-ubuntu24-arm64
       UBUNTU_SERIES: "24.04.5"
     steps:
       - checkout
@@ -397,10 +37,17 @@ jobs:
           name: Admit the native KVM host
           command: |
             set -euo pipefail
-            if [ "$(uname -m)" != "x86_64" ]; then
-              echo "the Ubuntu 24 node image is linux/amd64 and needs an amd64 machine" >&2
+            if [ "$(id -u)" = "0" ]; then
+              echo "the node image job must run as a non-root account" >&2
               exit 1
             fi
+            case "$(uname -m)" in
+              aarch64|arm64) ;;
+              *)
+                echo "the Ubuntu 24 node image is linux/arm64 and needs an arm64 machine" >&2
+                exit 1
+                ;;
+            esac
             if ! docker info >/dev/null 2>&1; then
               echo "docker is not available" >&2
               exit 1
@@ -434,7 +81,7 @@ jobs:
               echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
               exit 1
             fi
-            NVKE_OS_UBUNTU_VERSION=24.04 NVKE_OS_ARCH=amd64 \
+            NVKE_OS_UBUNTU_VERSION=24.04 NVKE_OS_ARCH=arm64 \
               scripts/nvke-os-local-harbor.sh "circleci-${CIRCLE_BUILD_NUM}" 4
       - run:
           name: Record the disk digest
@@ -446,7 +93,7 @@ jobs:
             fi
             attempt="circleci-${CIRCLE_BUILD_NUM}"
             outdir=".nvkr/runs/${attempt}/outputs"
-            qcow="${outdir}/nvke-node-image-ubuntu24-amd64.qcow2"
+            qcow="${outdir}/nvke-node-image-ubuntu24-arm64.qcow2"
             test -f "${qcow}"
             (
               cd "${outdir}"
@@ -469,16 +116,6 @@ jobs:
               "${attempt}" "${CIRCLE_BUILD_NUM}" "${size}" "${digest}" \
               > "${outdir}/build-info.txt"
             test -f ".nvkr/runs/${attempt}/lifecycle.json"
-      - run:
-          name: Boot-smoke the Ubuntu 24 node image
-          no_output_timeout: 45m
-          command: |
-            set -euo pipefail
-            # A failed fetch or smoke leaves the built disk for inspection.
-            # Reclaim sees this marker and does not hand the tree back.
-            trap 'mkdir -p .nvkr; : > .nvkr/preserve-workspace; trap - ERR; exit 1' ERR
-            scripts/fetch-nvke-efi-src.sh
-            scripts/boot-smoke-node-image.sh
       - when:
           condition: << pipeline.parameters.publish_node_image >>
           steps:
@@ -487,7 +124,7 @@ jobs:
                 command: |
                   set -euo pipefail
                   scripts/push-node-image-s3.sh \
-                    ".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/outputs/nvke-node-image-ubuntu24-amd64.qcow2"
+                    ".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/outputs/nvke-node-image-ubuntu24-arm64.qcow2"
       - run:
           name: Stage the digest and attempt record
           command: |
@@ -498,290 +135,49 @@ jobs:
             # between jobs, so a shared /tmp path can hold files this user cannot write.
             dest="nvkr-node-image-meta"
             mkdir -p "${dest}"
-            cp "${outdir}/nvke-node-image-ubuntu24-amd64.qcow2.sha256" "${dest}/"
+            cp "${outdir}/nvke-node-image-ubuntu24-arm64.qcow2.sha256" "${dest}/"
             cp "${outdir}/build-info.txt" "${dest}/"
             cp ".nvkr/runs/${attempt}/lifecycle.json" "${dest}/"
-            if [ -f .nvkr/evidence/boot-smoke-amd64.log ]; then
-              cp .nvkr/evidence/boot-smoke-amd64.log "${dest}/"
-            fi
       - store_artifacts:
           path: nvkr-node-image-meta
           destination: node-image
-      - reclaim-workspace
-
-  build-controller-image:
-    executor: controller
-    parameters:
-      execute:
-        type: boolean
-        default: false
-    steps:
-      - checkout
-      - install-pinned-go
       - run:
-          name: Validate the controller-image Definition
+          name: Delete the job working directory
+          when: always
           command: |
             set -euo pipefail
-            unset GITHUB_ACTIONS
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            git_version="$(git version | awk '{ print $3 }')"
-            git_major="${git_version%%.*}"
-            git_rest="${git_version#*.}"
-            git_minor="${git_rest%%.*}"
-            git_minor="${git_minor%%[!0-9]*}"
-            if [ "${git_major}" -lt 2 ] || { [ "${git_major}" -eq 2 ] && [ "${git_minor}" -lt 38 ]; }; then
-              echo "git ${git_version} is older than 2.38" >&2
+            case "${PWD}" in
+              /*) ;;
+              *)
+                echo "workspace path is not absolute" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${PWD}" = "/" ]; then
+              echo "refusing to clean the host root" >&2
               exit 1
             fi
-            command -v make >/dev/null
-            make build
-            bin/nvkr definition validate \
-              --definition .circleci/definition-controller-image-amd64.yaml
-      - run:
-          name: Plan the controller image
-          command: |
-            set -euo pipefail
-            unset GITHUB_ACTIONS
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            bin/nvkr run plan \
-              --definition .circleci/definition-controller-image-amd64.yaml \
-              --environment docs/examples/nvke-deploy/environment-local.yaml
-      - when:
-          condition:
-            and:
-              - << parameters.execute >>
-              - not: << pipeline.parameters.dry_run >>
-          steps:
-            - admit-amd64-docker
-            - run:
-                name: Build the controller image
-                no_output_timeout: 120m
-                command: |
-                  set -euo pipefail
-                  unset GITHUB_ACTIONS
-                  # shellcheck disable=SC1090
-                  source "${BASH_ENV}"
-                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
-                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
-                    exit 1
-                  fi
-                  bin/nvkr run local \
-                    --definition .circleci/definition-controller-image-amd64.yaml \
-                    --environment docs/examples/nvke-deploy/environment-local.yaml \
-                    --attempt "circleci-${CIRCLE_BUILD_NUM}-image" \
-                    --ui=plain --jobs 1
-            - when:
-                condition: << pipeline.parameters.publish_controller_image >>
-                steps:
-                  - run:
-                      name: Publish the controller image
-                      command: |
-                        set -euo pipefail
-                        scripts/push-harbor-oci.sh image \
-                          "circleci-${CIRCLE_BUILD_NUM}-image"
-            - run:
-                name: Stage the attempt record
-                when: always
-                command: |
-                  set -euo pipefail
-                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-image/lifecycle.json"
-                  # Stage inside this job's own working directory. The runner keeps /tmp
-                  # between jobs, so a shared /tmp path can hold files this user cannot write.
-                  mkdir -p nvkr-artifacts
-                  if [ -f "${src}" ]; then
-                    cp "${src}" nvkr-artifacts/lifecycle.json
-                  else
-                    printf 'attempt record missing: %s\n' "${src}" > nvkr-artifacts/lifecycle-missing.txt
-                    exit 1
-                  fi
-            - store_artifacts:
-                path: nvkr-artifacts
-                destination: nvkr-attempt
-                when: always
-            - reclaim-workspace
-            - run:
-                name: Remove the NVKR attempt directory
-                when: always
-                command: |
-                  set -euo pipefail
-                  # This runner keeps the checkout. Remove only this job's attempt.
-                  # The node image stays at .nvkr/runs/circleci-<its build number>/outputs.
-                  attempt_dir=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-image"
-                  if [ -d "${attempt_dir}" ]; then
-                    rm -rf "${attempt_dir}"
-                  fi
-
-  build-charts:
-    executor: controller
-    parameters:
-      execute:
-        type: boolean
-        default: false
-    steps:
-      - checkout
-      - install-pinned-go
-      - run:
-          name: Validate the chart Definition
-          command: |
-            set -euo pipefail
-            unset GITHUB_ACTIONS
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            git_version="$(git version | awk '{ print $3 }')"
-            git_major="${git_version%%.*}"
-            git_rest="${git_version#*.}"
-            git_minor="${git_rest%%.*}"
-            git_minor="${git_minor%%[!0-9]*}"
-            if [ "${git_major}" -lt 2 ] || { [ "${git_major}" -eq 2 ] && [ "${git_minor}" -lt 38 ]; }; then
-              echo "git ${git_version} is older than 2.38" >&2
+            uid="$(id -u)"
+            gid="$(id -g)"
+            if [ "${uid}" = "0" ]; then
+              echo "refusing to clean the workspace as root" >&2
               exit 1
             fi
-            command -v make >/dev/null
-            make build
-            bin/nvkr definition validate \
-              --definition .circleci/definition-charts-amd64.yaml
-      - run:
-          name: Plan the charts
-          command: |
-            set -euo pipefail
-            unset GITHUB_ACTIONS
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            bin/nvkr run plan \
-              --definition .circleci/definition-charts-amd64.yaml \
-              --environment docs/examples/nvke-deploy/environment-local.yaml
-      - when:
-          condition:
-            and:
-              - << parameters.execute >>
-              - not: << pipeline.parameters.dry_run >>
-          steps:
-            - admit-amd64-docker
-            - run:
-                name: Build the charts
-                no_output_timeout: 120m
-                command: |
-                  set -euo pipefail
-                  unset GITHUB_ACTIONS
-                  # shellcheck disable=SC1090
-                  source "${BASH_ENV}"
-                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
-                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
-                    exit 1
-                  fi
-                  bin/nvkr run local \
-                    --definition .circleci/definition-charts-amd64.yaml \
-                    --environment docs/examples/nvke-deploy/environment-local.yaml \
-                    --attempt "circleci-${CIRCLE_BUILD_NUM}-charts" \
-                    --ui=plain --jobs 1
-            - when:
-                condition: << pipeline.parameters.publish_charts >>
-                steps:
-                  - run:
-                      name: Publish the charts and bound controller image
-                      command: |
-                        set -euo pipefail
-                        scripts/push-harbor-oci.sh charts \
-                          "circleci-${CIRCLE_BUILD_NUM}-charts"
-            - run:
-                name: Stage the attempt record
-                when: always
-                command: |
-                  set -euo pipefail
-                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-charts/lifecycle.json"
-                  # Stage inside this job's own working directory. The runner keeps /tmp
-                  # between jobs, so a shared /tmp path can hold files this user cannot write.
-                  mkdir -p nvkr-artifacts
-                  if [ -f "${src}" ]; then
-                    cp "${src}" nvkr-artifacts/lifecycle.json
-                  else
-                    printf 'attempt record missing: %s\n' "${src}" > nvkr-artifacts/lifecycle-missing.txt
-                    exit 1
-                  fi
-            - store_artifacts:
-                path: nvkr-artifacts
-                destination: nvkr-attempt
-                when: always
-            - reclaim-workspace
-            - run:
-                name: Remove the NVKR attempt directory
-                when: always
-                command: |
-                  set -euo pipefail
-                  # This runner keeps the checkout. Remove only this job's attempt.
-                  # The node image stays at .nvkr/runs/circleci-<its build number>/outputs.
-                  attempt_dir=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}-charts"
-                  if [ -d "${attempt_dir}" ]; then
-                    rm -rf "${attempt_dir}"
-                  fi
+            # Delete only what this account owns. -delete implies -depth, so a
+            # directory is removed after its owned children. A foreign entry
+            # stays behind and fails the check below. Do not change ownership.
+            find "${PWD}" -xdev -mindepth 1 -user "${uid}" -group "${gid}" -delete || true
+            remaining="$(find "${PWD}" -xdev -mindepth 1 -print)"
+            if [ -n "${remaining}" ]; then
+              printf '%s\n' "${remaining}" | head -n 20 >&2 || true
+              echo "workspace still contains files this account cannot delete" >&2
+              exit 1
+            fi
 
 workflows:
-  tutorial:
-    when: << pipeline.parameters.build_nvkectl >>
-    jobs:
-      # Feature branches prove the Definition and the plan. They do not build.
-      - build-artefacts:
-          name: verify
-          execute: false
-          filters:
-            branches:
-              ignore: main
-      # main builds. A pipeline started with dry_run still stops after the plan.
-      # nico-harbor supplies HARBOR_USER and HARBOR_PASS. This job does not publish, so it does not map those values.
-      - build-artefacts:
-          name: build
-          execute: true
-          context: [nico-harbor]
-          filters:
-            branches:
-              only: main
   node-os-image:
     when: << pipeline.parameters.build_node_image >>
     jobs:
       # nico-harbor supplies S3_ACCESS_KEY and S3_SECRET_KEY. The job does not print them.
       - build-node-os-image:
           context: [nico-harbor]
-  controller-image:
-    when: << pipeline.parameters.build_controller_image >>
-    jobs:
-      # Feature branches prove the Definition and the plan. They do not build.
-      - build-controller-image:
-          name: verify
-          filters:
-            branches:
-              ignore: main
-      # main builds. dry_run stops after the plan.
-      # publish_controller_image pushes only this job's image attempt.
-      # nico-harbor supplies HARBOR_USER and HARBOR_PASS. The job does not print them.
-      - build-controller-image:
-          name: build
-          execute: true
-          context: [nico-harbor]
-          filters:
-            branches:
-              only: main
-  charts:
-    when: << pipeline.parameters.build_charts >>
-    jobs:
-      # Feature branches prove the Definition and the plan. They do not build.
-      - build-charts:
-          name: verify
-          filters:
-            branches:
-              ignore: 
-                - main
-                - /^feat\/circle-ci$/
-      # main builds. dry_run stops after the plan.
-      # publish_charts pushes this job's charts and the controller image bound by that Run.
-      # nico-harbor supplies HARBOR_USER and HARBOR_PASS. The job does not print them.
-      - build-charts:
-          name: build
-          execute: true
-          context: [nico-harbor]
-          filters:
-            branches:
-              only: 
-                - main
-                - /^feat\/circle-ci$/

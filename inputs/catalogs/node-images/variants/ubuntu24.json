@@ -12,10 +12,10 @@
         ],
         "fromSource": true,
         "builderType": "oci-hermetic",
-        "repo": "https://github.com/dsx-ai-factory/nvke.git",
-        "tag": "v0.23.0",
-        "commit": "2cfd00081b468d85a4894ec17e9deac13c9d8169",
-        "treeHash": "a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53",
+        "repo": "https://github.com/firmus-ai-infra/nvke.git",
+        "tag": "9114d841032c47614d21062ae333340730c088c2",
+        "commit": "9114d841032c47614d21062ae333340730c088c2",
+        "treeHash": "2a08de9723d51e9acf3def48ea2ced1a5e798ca3",
         "toolchainImages": {
           "amd64": "docker.io/library/golang@sha256:55395706e9703db746cc507abfc4eb2aea75918f8a8024e4848e2cb81004f5ad",
           "arm64": "docker.io/library/golang@sha256:2bcff0c6ad6e8c5353e8c0d5c7f17bfcc87d667d0169615e34db1acc0db985b9"
@@ -34,7 +34,7 @@
           "-ec",
           "test \"$(getconf GNU_LIBC_VERSION)\" = 'glibc 2.36' || {\n  echo 'Ubuntu 24 agent requires the pinned Bookworm glibc 2.36 builder' >&2; exit 1;\n}\n# Retain the source-required compiler; the Packer image owns VM tools.\ncase \"$(uname -m)\" in\n  x86_64) go_arch=amd64; go_sha=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 ;;\n  aarch64) go_arch=arm64; go_sha=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49 ;;\n  *) echo 'Unsupported Go execution architecture' >&2; exit 1 ;;\nesac\nmkdir -p .nvkr-tools\ncurl --fail --location --max-time 120 --output .nvkr-tools/go.tar.gz \\\n  \"https://go.dev/dl/go1.27.3.linux-${go_arch}.tar.gz\"\nprintf '%s  .nvkr-tools/go.tar.gz\\n' \"$go_sha\" | sha256sum --quiet -c -\ntar -xzf .nvkr-tools/go.tar.gz -C .nvkr-tools\nexport PATH=\"${PWD}/.nvkr-tools/go/bin:$PATH\"\ntest \"$(GOTOOLCHAIN=local go version)\" = \"go version go1.27.3 linux/${go_arch}\"\ncd agent\nexport GOENV=off GOWORK=off GOTOOLCHAIN=local GOFLAGS=\npins=\"$(sha256sum go.mod go.sum)\"\n# Distinct equivalent URLs avoid Go's per-proxy cached metadata errors.\n# Go owns transport fallback; checksum failures never select another proxy.\n# Keep direct fallback limited to a missing proxy module (404/410).\nproxy=https://proxy.golang.org\nGOPROXY=\"${proxy}|${proxy}/|${proxy}//,direct\" \\\n  timeout --kill-after=10s 540s go mod download || {\n    status=$?; echo 'agent module download failed or exceeded 540s' >&2; exit \"$status\";\n  }\nprintf '%s\\n' \"$pins\" | sha256sum --quiet -c - || {\n  echo 'agent module pins changed during download' >&2; exit 1;\n}\n# Offline verification and vendoring run once, after acquisition succeeds.\nGOPROXY=off timeout --kill-after=10s 60s go mod verify || {\n  status=$?; echo 'agent module cache verification failed or exceeded 60s' >&2; exit \"$status\";\n}\nGOPROXY=off timeout --kill-after=10s 180s go mod vendor || {\n  status=$?; echo 'agent offline vendoring failed or exceeded 180s' >&2; exit \"$status\";\n}\nprintf '%s\\n' \"$pins\" | sha256sum --quiet -c - || {\n  echo 'agent module pins changed during vendoring' >&2; exit 1;\n}\n# Capture the exact packaging executable alongside the vendored source.\n# The build phase remains offline and cannot bootstrap another nfpm.\nreadonly package_arch='{{.Arch}}'\ncase \"$package_arch\" in\n  amd64) release_arch=x86_64; archive_sha=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783; binary_sha=17133a2467ffb7cec851c2d7bae0c6098d09d7ed7d3d101a9605f6a473323936 ;;\n  arm64) release_arch=arm64; archive_sha=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c; binary_sha=4d7ddf169945f7f557ac5373035d373429050d00476925953560e1ac65e16c74 ;;\n  *) echo 'unsupported nfpm architecture' >&2; exit 1 ;;\nesac\nmkdir nvkr-tools\ncurl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 30 --max-time 300 --max-filesize 67108864 \\\n  --output nvkr-tools/nfpm.tar.gz \\\n  \"https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_${release_arch}.tar.gz\"\nprintf '%s  %s\\n' \"$archive_sha\" nvkr-tools/nfpm.tar.gz | sha256sum --strict -c -\ntar -xzf nvkr-tools/nfpm.tar.gz -C nvkr-tools nfpm LICENSE.md\nprintf '%s  %s\\n' \"$binary_sha\" nvkr-tools/nfpm | sha256sum --strict -c -\nchmod 0755 nvkr-tools/nfpm\n"
         ],
-        "sourceDateEpoch": 1793236039
+        "sourceDateEpoch": 1793763887
       }
     },
     "nvke-doca-ovs": {
@@ -280,10 +280,10 @@
           ],
           "timeoutSeconds": 21600
         },
-        "repo": "https://github.com/dsx-ai-factory/nvke.git",
-        "tag": "v0.23.0",
-        "commit": "2cfd00081b468d85a4894ec17e9deac13c9d8169",
-        "treeHash": "a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53",
+        "repo": "https://github.com/firmus-ai-infra/nvke.git",
+        "tag": "9114d841032c47614d21062ae333340730c088c2",
+        "commit": "9114d841032c47614d21062ae333340730c088c2",
+        "treeHash": "2a08de9723d51e9acf3def48ea2ced1a5e798ca3",
         "toolchainImages": {
           "amd64": "sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0",
           "arm64": "ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3"
@@ -331,7 +331,7 @@
           "-ec",
           "cd agent\nexport GOENV=off GOWORK=off GOTOOLCHAIN=local GOFLAGS=\npins=\"$(sha256sum go.mod go.sum)\"\n# Distinct equivalent URLs avoid Go's per-proxy cached metadata errors.\n# Go owns transport fallback; checksum failures never select another proxy.\n# Keep direct fallback limited to a missing proxy module (404/410).\nproxy=https://proxy.golang.org\nGOPROXY=\"${proxy}|${proxy}/|${proxy}//,direct\" \\\n  timeout --kill-after=10s 540s go mod download || {\n    status=$?; echo 'agent module download failed or exceeded 540s' >&2; exit \"$status\";\n  }\nprintf '%s\\n' \"$pins\" | sha256sum --quiet -c - || {\n  echo 'agent module pins changed during download' >&2; exit 1;\n}\n# Offline verification and vendoring run once, after acquisition succeeds.\nGOPROXY=off timeout --kill-after=10s 60s go mod verify || {\n  status=$?; echo 'agent module cache verification failed or exceeded 60s' >&2; exit \"$status\";\n}\nGOPROXY=off timeout --kill-after=10s 180s go mod vendor || {\n  status=$?; echo 'agent offline vendoring failed or exceeded 180s' >&2; exit \"$status\";\n}\nprintf '%s\\n' \"$pins\" | sha256sum --quiet -c - || {\n  echo 'agent module pins changed during vendoring' >&2; exit 1;\n}\n"
         ],
-        "sourceDateEpoch": 1793236039
+        "sourceDateEpoch": 1793763887
       }
     },
     "nvke-node-image-amd64": {

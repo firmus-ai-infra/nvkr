@@ -2,13 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Fetch the pinned NVKE commit that owns qcow-imager.efi and boot-smoke.sh.
+# Fetch the pinned NVKE commit that owns boot-smoke.sh.
 # A checkout already at that commit is left in place. Any other tree is an error.
 
 set -euo pipefail
 
 nvke_repo="https://github.com/firmus-ai-infra/nvke.git"
-nvke_commit="ed2f2b032d2849014ec112bb94162b10c8b5ff5c"
+nvke_commit="9114d841032c47614d21062ae333340730c088c2"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 src="${repo_root}/.nvkr/nvke-efi-src"
