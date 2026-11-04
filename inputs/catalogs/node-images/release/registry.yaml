@@ -8,8 +8,8 @@ metadata:
   description: Non-FDE and public-bootstrap FDE NVKE node images from explicit authenticated component outputs.
 sources:
   nvke-os:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 9114d841032c47614d21062ae333340730c088c2
     toolchainImagesByArch:
       # AMD64 is a substitution-only local baseline. ARM64 selects the native
       # Go 1.27.3 rebuild from workflow run 39522193703.
@@ -45,8 +45,8 @@ sources:
           echo 'agent module pins changed during vendoring' >&2; exit 1;
         }
   nvke-cni-calico-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 9114d841032c47614d21062ae333340730c088c2
     toolchainImagesByArch:
       amd64: sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3
@@ -69,8 +69,8 @@ sources:
       amd64: docker.io/library/golang@sha256:8aa2821993207ae840ce09e4223217efcd14e01f71525db734faf4232bd59999
       arm64: docker.io/library/golang@sha256:288557fbc328e4ef9a78bae2eb44f24447029ff08667be883d79eeaa9029cf0c
   nvke-kubeadm-distro-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 9114d841032c47614d21062ae333340730c088c2
     toolchainImagesByArch:
       amd64: sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3
@@ -88,8 +88,8 @@ sources:
           ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
         cp -a "$bundle_root/dist" os-image/packages/kubeadm-distro/dist
   nvke-spire-agent-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 9114d841032c47614d21062ae333340730c088c2
     toolchainImagesByArch:
       amd64: sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3
@@ -100,8 +100,8 @@ sources:
         make -C os-image/packages/spire-agent bundle nfpm \
           ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
   nvke-doca-ovs-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 9114d841032c47614d21062ae333340730c088c2
     toolchainImagesByArch:
       amd64: sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3
