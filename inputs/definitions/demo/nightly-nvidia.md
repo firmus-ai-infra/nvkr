@@ -22,9 +22,8 @@ baseline is rebound by the runtime source policy described below; tagged local
 Definitions retain their release inputs. Its NVIDIA OVN 2.4.2 producer agrees
 with the standalone OVN image and chart outputs. The overlays retain exact
 predecessor bindings and required native KVM execution; there is no upstream OVN
-fallback. The CAPI init output selects the separately reviewed current-main
-acquisition from the shared native-tools catalog. The tagged local demo retains
-its original acquisition.
+fallback. The CAPI init output uses the shared native-tools catalog's tagged
+acquisition, which NVKE `v0.23.0` aligned with current main's parent image.
 
 The existing `github-nightly-nvidia.json` Environment retains ARC ARM64 KVM disk
 production, `build-provenance-v1` evidence, private/internal artifact storage and
@@ -43,9 +42,8 @@ bin/nvkr run generate --engine github \
 ```
 
 The Environment selects `githubRuntimePlan: true` and an explicit
-`githubRuntimeSource` policy for NVKE main. The coordinator resolves main once
-and passes its full commit through the generated producer's required
-`source_commit` dispatch input. The catalog owner authenticates that exact Git
+`githubRuntimeSource` policy for NVKE main. A manual caller supplies an exact source commit through the generated
+producer's required `source_commit` dispatch input. The catalog owner authenticates that exact Git
 tree and applies it after existing overlays to every source-built NVKE product,
 including disk materials and the installer. Commands, toolchains and separately
 acquired dependencies retain their reviewed selections. No catalog lock or
@@ -57,6 +55,7 @@ changed dispatch inputs fail. Routine source changes within the reviewed workflo
 contract do not require regeneration; changes to membership, scheduling or
 Environment policy do. This producer does not emit a qualification input handoff.
 
-The downstream native Go test consumes the completed, authenticated producer
-artifacts. Definition validation and Plan compilation prove neither successful
+No maintained nightly dispatches this producer or consumes its published artifacts.
+The AMD64 hosted nightly uses its own AMD64 Definition and the shared v0.23.0
+catalogs for local source preparation. Definition validation and Plan compilation prove neither successful
 publication nor VM bootstrap, cleanup, FIPS/STIG compliance or qualification.

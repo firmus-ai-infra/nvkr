@@ -23,8 +23,11 @@ The [34-concept reference](user-concepts.md) explains the vocabulary and connect
 | Choose components, pin inputs, and scope replacements | [Catalogs and components](catalogs-and-components.md) |
 | Visualize dependencies and generate GitHub Actions | [Pipeline generation](generate-pipeline.md) |
 | Understand how heterogeneous materials become a disk | [Node images](node-images.md) |
+| Build AICR deployment bundles as OCI artifacts | [AICR inputs, supported hardware recipes and rendering limits](../inputs/definitions/aicr/README.md) |
 | Find published outputs, download a named output, and verify a consumer claim | [Release quickstart](release-quickstart.md) |
-| Build nightly NVKR candidates and run NVKE end-to-end tests | [Nightly workflow and current admission](nvke-nightly.md) |
+| Plan an NVKE GPU site from NVKR Releases (not yet runnable end to end) | [Working Definitions and GPU system matrix](../inputs/definitions/nvke/README.md#working-definitions-for-an-nvke-gpu-site), [site install outline](release-quickstart.md#install-an-nvke-site-from-the-releases) |
+| Run the nightly NVKE build and end-to-end test | [Nightly workflow and current admission](nvke-nightly.md) |
+| Run full build/site/tenant E2E on my PR before merging | [Run E2E tests for your pull request](nvke-nightly.md#run-a-workflow-branch-before-merging) |
 | Check a producing Run and configure qualification once | [Artifact checks and hosted qualification](lifecycle.md#authenticate-a-qualification-candidate), [candidate readiness](../inputs/definitions/nvke/README.md#qualification-readiness) |
 | Try component replacements locally | [Runnable authoring lab](examples/authoring-lab/README.md) |
 | Build and recover the local NVKE CLI publication | [Local NVKE walkthrough](../demos/m1-local.md) |
@@ -32,8 +35,8 @@ The [34-concept reference](user-concepts.md) explains the vocabulary and connect
 Example-specific inputs and commands live beside their Definitions: [three-output tutorial](examples/nvke-tutorial/README.md),
 [nine-output deploy example](examples/nvke-deploy/README.md), [69-output M2 candidate and committed workflow](../inputs/definitions/nvke/README.md),
 and [OS-image routes](../inputs/definitions/diagnostics/README.md). The separate
-[Ubuntu 24 inputs](../inputs/definitions/diagnostics/ubuntu24/README.md) select native plain and
-public-bootstrap FDE disk builds alongside the existing Ubuntu 26 default. The
+[Ubuntu 24 inputs](../inputs/definitions/diagnostics/ubuntu24/README.md) select build-only native plain and
+public-bootstrap FDE disk diagnostics; the sibling Ubuntu 24.04 disks family selects them for publication. The
 [FDE-only diagnostic workflow](../inputs/definitions/diagnostics/fde.md) selects one native disk for branch iteration.
 The [demo index](../demos/README.md) lists presentations, runnable journeys, and prerequisites.
 
@@ -50,11 +53,12 @@ records source availability and remaining gaps.
 | Canonical Plans, graph views, comparison, and drift | [Plan and graph inspection](plan-and-graph-inspection.md) |
 | Registry/layout browsing, generic JSON export, output downloads, credentials, and metadata limits | [Release navigation](release-navigation.md) |
 | Publication graph, artifact subjects, and signing scope | [Publication architecture](publication-architecture.md) |
+| Review the S3 boot and package delivery contract | [ADR-20 contract](adr/0020-artifact-publication-and-target-configuration.md#s3-file-delivery-contract), [implementation boundary](adr/reconciliation/s3-boot-and-package-delivery-contract.md#s3-boot-and-package-delivery-contract) |
 | Coordinated upstream versions and exact locks | [Generic pin-set example](generic-pin-set-example.md), [NVKE acquired charts](nvke-pin-set-usage.md) |
 | Reviewable updates and matching regeneration (the installed `catalog-refresh.yaml` is generated, never hand-edited) | [Catalog maintenance](catalog-maintenance.md) |
 | Chart slots, image outputs, and registry-independent bytes | [Declarative Helm bindings](declarative-helm-bindings.md) |
 | Software inventories and their exact subjects/stages | [Dependency SBOMs](dependency-sboms.md) |
-| Discover and explicitly select provisional CLI validators | [CLI artifact testing](artifact-testing.md#provisional-validator-catalog) |
+| Discover and explicitly select provisional CLI validators | [CLI artifact testing](artifact-testing.md#run-locally) |
 | External test output descriptions and configured diagnostic checks | [External test output contract](external-test-output-contract.md) |
 | Bounded guest capture format and acquisition ownership | [OS acquisition contract](nvke-os-acquisition-contract.md) |
 | Optional live-owner disk inspection and material observations | [OS live inspection](nvke-os-live-inspection.md) |
@@ -76,13 +80,13 @@ separates the completed ownership move from conditional consolidation, and recor
 The [input index](../inputs/README.md) and [catalog ownership map](../inputs/catalogs/README.md) own current locations.
 
 [CONTEXT](../CONTEXT.md) owns formal vocabulary; the [SADD](sadd.md) explains architecture and failure behavior.
-The [ADRs](adr) own engineering contracts, and [reconciliation](adr/reconciliation.md) is the current
+The [ADRs](adr) own engineering contracts, and [reconciliation](adr/reconciliation/README.md) is the current
 implementation/evidence ledger. The [roadmap](milestones.md) links outcomes to the detailed
 [acceptance specification](epics-v1-spec.md).
 
-[Definition partitioning strategy](definition-partitioning-strategy.md) explains the four-family NVKE
+[Definition partitioning strategy](definition-partitioning-strategy.md) explains the NVKE family
 pilot, historical graph-capacity measurements, shared catalog ownership and related Release options.
-The [input instructions](../inputs/definitions/nvke/README.md#four-family-pilot) own generation and checking;
+The [input instructions](../inputs/definitions/nvke/README.md#family-pilot) own generation and checking;
 the combined candidate remains available pending consumer and qualification cutover.
 
 Proposed [ADR-24: imported validator catalog](adr/0024-imported-validator-catalog.md) defines discovery,
@@ -92,7 +96,20 @@ broader adapter and profile support remains deferred.
 
 Proposed [ADR-26: Definition composition](adr/0026-definition-composition.md) designs composite Definitions
 that release several digest-pinned Definitions as one Release, with a worked NVKE four-family example and
-implementation units. It is design only.
+implementation units. Units U1–U7 are implemented and contract-tested only; no hosted composite Run, publication or
+consumer verification has been exercised or recorded, and qualification and member Release reuse remain deferred.
+
+Proposed [ADR-27: Pinned-tool producers](adr/0027-pinned-tool-producers.md) designs producers that run one
+released, digest-pinned tool offline with fixed arguments and typed inputs, with AICR bundles as the first use.
+It is design only.
+
+Proposed [ADR-28: Multi-platform executables](adr/0028-multi-platform-executable-indexes.md) designs one tool
+source for every platform of a release, where the platforms share a format, companions and admitted URL
+spellings, and executable outputs published as standard OCI image indexes. The AICR CLI is the first
+migration, and the ADR inventories existing executables to retrofit. It is design only.
+
+Proposed [ADR-30: authenticated result reuse](adr/0030-authenticated-result-reuse.md) designs cross-Run reuse
+of complete named outputs and the test matrix for implementing it; reuse is not implemented.
 
 [Development](../DEVELOPMENT.md) covers setup, package ownership, generated files, and the completion gate.
 Its [pipeline development loop](../DEVELOPMENT.md#test-pipeline-changes-on-a-feature-branch) covers branch

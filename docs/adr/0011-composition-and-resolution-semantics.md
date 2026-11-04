@@ -1,9 +1,9 @@
 # ADR-11 — Direct producer selection & build graph derivation
 
 - **Decision status:** Proposed (implementation-aligned draft; pending named-decider ratification)
-- **Implementation maturity:** Tracked separately in `reconciliation.md`; implementation and test evidence do not
+- **Implementation maturity:** Tracked separately in `reconciliation/README.md`; implementation and test evidence do not
   constitute governance ratification.
-- **Acceptance-test maturity:** Tracked separately in `reconciliation.md`; green unit tests alone do not
+- **Acceptance-test maturity:** Tracked separately in `reconciliation/README.md`; green unit tests alone do not
   establish end-to-end conformance.
 - **Deciders:** [INPUT NEEDED — author + reviewers]
 - **Index:** ADR-11 in the consolidated NVKR ADR set.
@@ -64,6 +64,7 @@ index digest only when its declared platform is covered by the required set.
 Each output remains independently accountable even if two output graphs have identical Build Digests. Initial
 execution may produce shared components twice. Cross-output reuse requires a separate authenticated reuse
 contract; a digest match alone cannot satisfy another output's required execution or evidence slot.
+Proposed ADR-30 keys cross-Run reuse by named output and refuses sibling substitution; it is not implemented.
 
 ### 3. Component catalog overlays and trust
 

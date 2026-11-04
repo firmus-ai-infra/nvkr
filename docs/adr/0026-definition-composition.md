@@ -1,15 +1,16 @@
 # ADR-26 — Definition composition
 
 - **Decision status:** Proposed (design only; pending named-decider ratification)
-- **Implementation maturity:** Designed, not implemented. No composite schema, loader, merge, Plan record,
-  publication binding or command exists; see `reconciliation.md`.
-- **Acceptance-test maturity:** None. The implementation units below name the contract suites that must pass;
-  no contract test, generated bundle, hosted Run or consumer verification exercises a composite.
+- **Implementation maturity:** U1–U7 implemented; U8 deferred, U9 waits on the result-reuse decision and U10
+  on a hosted composite Run. `reconciliation/README.md` records the implemented scope.
+- **Acceptance-test maturity:** Contract suites for U1–U7, including an opt-in extended identity-invariance
+  contract over the four NVKE families. No hosted Run, composite publication or consumer verification
+  exercises a composite.
 - **Deciders:** Pending; release-engineering, publication, catalog and qualification owners must be named before
   ratification.
 - **Index:** Proposed ADR-26 supplements ADR-01–22 and proposed ADR-23/24; it remains outside the consolidated
-  contract set until accepted. It coordinates with the separately drafted authenticated result-reuse decision
-  (backlog item 4), which is not on this branch.
+  contract set until accepted. It coordinates with the separately drafted authenticated result-reuse decision,
+  proposed [ADR-30](0030-authenticated-result-reuse.md) (backlog item 4).
 - **Relates to:** ADR-01 (canonical codec and digest families), ADR-03 (coded errors), ADR-04 §5 (consumer
   verification), ADR-09 (production provenance), ADR-11 §1–§2 (direct selection, independent output uses),
   ADR-12 (target platforms), ADR-16 §5 (evidence lanes and qualification), ADR-17 §1 and §6 (public lifecycle,
@@ -23,11 +24,11 @@
 
 ## Context
 
-The four-family NVKE pilot (#211) split the 69-output combined candidate into core (20), services (28), telemetry
-(17) and disks (4) Definitions. Each family has its own owner, Environment, generated bundle, Run and Release, and
+At launch, the four-family NVKE pilot (#211) split the then 69-output combined candidate into core (20), services
+(28), telemetry (17) and disks (4) Definitions. Each family has its own owner, Environment, generated bundle, Run and Release, and
 the [partitioning strategy](../definition-partitioning-strategy.md) records why. The combined
-`inputs/definitions/nvke/definition.yaml` remains a hand-maintained second copy of the same 69 output
-declarations, so every family change must be repeated there. Consumers that want one product Release must
+`inputs/definitions/nvke/definition.yaml` remains a hand-maintained second copy of the families' shared
+output declarations, currently 69, so every family change must be repeated there. Consumers that want one product Release must
 otherwise associate four family Releases themselves.
 
 Execution partitioning (ADR-18 §8, PR #264) already runs one complete Plan as bounded same-commit worker
@@ -114,7 +115,11 @@ consumes unchanged. The derivation is a pure, deterministic function of the comp
 The cross-member producer rule is deliberately stricter than a single Definition: two family owners releasing the
 same component at different pins is exactly the silent incompatibility a combined Release must not hide. Authors
 who intend two variants of one component must put both outputs in one member, where the variant is explicit. The
-four NVKE families select no `(component, platform)` in common, so the rule does not affect them.
+core, services, telemetry and Ubuntu 26.04 disks families select no `(component, platform)` in common, so the rule
+does not affect them. The Ubuntu 24.04 disks family replaces the same disk, agent, installer and DOCA OVS
+components through its overlay, so it is a separately released sibling that the combined Definition omits.
+A composite that holds both Ubuntu series must select both in one member; the worked example below composes
+the other four families.
 
 The effective Definition is a derived internal record, like a Plan. It is never written as an authored input,
 cannot be selected with `--definition` and has no file. `definition inspect` may show it as a description.
@@ -171,7 +176,7 @@ one is the existing coded failure, admitted before output work wherever the exis
 
 ### 6. Reusing already-published member Releases: only through authenticated acceptance, a planned follow-up
 
-Decided: composites rebuild every output until the authenticated result-reuse decision (draft ADR-25,
+Decided: composites rebuild every output until the authenticated result-reuse decision (draft ADR-30,
 backlog item 4) lands. Cross-workflow reuse of member outputs is then planned as follow-up unit U9.
 
 In this decision every composite Run builds every output. No member Release, family Run or prior publication
@@ -232,7 +237,7 @@ Plan, workflow and publication bounds stay with their existing owners (§5).
 | `run plan`, `run graph`, `run diff`, dry-run | Supported once implemented |
 | `run local` | Static-unqualified only, as for any Definition |
 | `run generate` for a production bundle, flat or partitioned | Supported once implemented; `pipeline-attested` |
-| `githubDevelopment: true` | Supported once U5 is implemented; signed development stays `pipeline-attested` with its own signer and disposable namespaces, unsigned stays `static-unqualified`, and neither grants production acceptance. The single fixed development layout belongs to the combined candidate until cutover, so U5 admits a named development bundle for composites, with its own manifest, workflow, signer identity and namespace under ADR-21. The existing refusal of `githubDevelopment` with `githubBundle` for plain Definitions is unchanged |
+| `githubDevelopment: true` | Supported by U5; signed development stays `pipeline-attested` with its own signer and disposable namespaces and grants no production acceptance. The single fixed development layout belongs to the combined candidate until cutover, so U5 admits a named development bundle for composites only and refuses a composite without `githubBundle` with `engine-capability` before any member read and at saved-Plan validation: `githubBundle: <name>` with publication under `ghcr.io/<owner>/<repo>/development-<name>`, workflow `.github/workflows/nvkr-dev-<name>.yml`, its own manifest and Plan under `.github/nvkr-dev-<name>/`, and a signer identity bound to that workflow. Names that collide with the fixed development qualification files (`qualify`, `smoke`, `qualification`) or the authored registry-cleanup workflow (`cleanup`) are refused. A named development bundle requires that isolated signed publication; an unsigned named development bundle is refused with `engine-capability`, because an unsigned build has no namespace to isolate. The existing refusal of `githubDevelopment` with `githubBundle` for plain Definitions is unchanged and now applies at compilation, where the Definition kind is known |
 | `run check-artifacts`, `run qualify`, qualification generation, release manifest issuance | Deferred; `engine-capability` before work |
 | Member Release reuse | Deferred (§6); `engine-capability` |
 | Nested or remote members | Rejected (§8, §1) |
@@ -259,6 +264,9 @@ Policy (ADR-04 §5), with the same lane and scope rules. The policy schema does 
 - A consumer may filter the authenticated Release view to one member's outputs. That filter is a description;
   it is not a member Release and grants no member-scoped capability.
 - Release description export (ADR-19 §3) includes the composition record and per-output member attribution.
+- A `per-output-v1` output-local publication carries the complete composition record with its one output;
+  it is not a Release. A consumer accepts a composite Release only when the record attributes exactly its
+  outputs, and assembly restores that exact membership before Release issuance.
 
 ### 11. Coded errors
 
@@ -409,7 +417,7 @@ not only failure, and are table-driven.
 | U6 Run and publication records | `pkg/nvkr/lifecycle`, `pkg/nvkr/delivery` | Run-record and publication-root schema majors with composition binding and per-output attribution; release description export | U3 |
 | U7 Consumer view | `pkg/nvkr/lifecycle`, `client/v1` | Composite exact-input expectation, member-set requirement, cross-form refusal | U6 |
 | U8 Deferred: qualification | ADR-16/21 owners | Bind the composition record into handoff, artifact checks, qualification evidence and release manifest | U6; separate decision update |
-| U9 Follow-up: member Release reuse | result-reuse owner | Cross-workflow origin admission in the reuse decision, §6 and §7 | draft ADR-25 (backlog item 4) landing |
+| U9 Follow-up: member Release reuse | result-reuse owner | Cross-workflow origin admission in the reuse decision, §6 and §7 | draft ADR-30 (backlog item 4) landing |
 | U10 Cutover: retire combined `definition.yaml` | NVKE release owner | Move the combined production, development and qualification paths to the composite; retire the combined bundles and input | U5–U8; hosted composite Run and consumer verification |
 
 Acceptance tests per unit:
@@ -497,7 +505,7 @@ Acceptance tests per unit:
 - **ADR-20:** record the composition binding in publication-root metadata (U6).
 - **ADR-21:** enroll composite bundles in maintenance and drift checks, and admit named composite development
   bundles (U5).
-- **Result reuse (draft ADR-25, backlog item 4):** once it lands, add authored cross-workflow origin admission
+- **Result reuse (draft ADR-30, backlog item 4):** once it lands, add authored cross-workflow origin admission
   for member outputs (U9). Until then composites rebuild every output.
 - **NVKE cutover:** retire the combined `definition.yaml` and its bundles after a hosted composite Run and
   independent consumer verification succeed (U10).
@@ -508,11 +516,16 @@ The questions left open by the first draft were decided on 2026-10-29:
 
 1. Error codes: reuse `invalid-catalog`, `unverified-ref`, `engine-capability` and `timeout`; no new ADR-03 band (§11).
 2. Cross-member pin divergence: rejected; the stricter rule stays (§3).
-3. Cross-workflow reuse: a follow-up after draft ADR-25 lands; composites rebuild everything until then (§6, U9).
+3. Cross-workflow reuse: a follow-up after draft ADR-30 lands; composites rebuild everything until then (§6, U9).
 4. Combined `definition.yaml`: a separate cutover gated on a hosted composite Run and consumer verification (U10).
 5. Development bundles: pulled forward into U5 (§9).
 
 ## Acceptance evidence
 
-None yet. The unit tests above are the contract target. No hosted composite Run, composite publication or
-consumer verification exists, and no claim follows from the family pilot's or the combined candidate's evidence.
+Contract suites only. U1–U7 are implemented with table-driven contract tests that assert coded errors;
+`NVKR_TEST_EXTENDED=1` additionally compiles the worked example above against the combined Plan's resolved
+catalogs and shows that every composite output and native build keeps the Build Digest and native build records
+of the combined Definition and the four families, including family-only outputs the combined Definition lacks,
+and that its worker partitions equal those of its effective Definition compiled plainly under the same
+partitioned Environment. These are local contracts. No hosted composite Run, composite publication or consumer verification
+has been exercised or recorded, and no claim follows from the family pilot's or the combined candidate's evidence.

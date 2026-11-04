@@ -8,9 +8,9 @@ sessions, not the architecture or setup procedure for current `run` and `e2e`.
 NVKR builds/acquires and observes artifacts. NVKE owns installation, site
 configuration, provisioning and tenant lifecycle. The demo calls `nvkr`
 subprocesses, not an execution SDK, and delegates installation to the exact
-pinned NVKE `v0.22.0` installer at
-`400c24fb6465b042be883d6b62472528520d6291`.
-See its [deployment instructions](https://github.com/dsx-ai-factory/nvke/blob/400c24fb6465b042be883d6b62472528520d6291/deploy/README.md).
+pinned NVKE `v0.23.0` installer at
+`2cfd00081b468d85a4894ec17e9deac13c9d8169`.
+See its [deployment instructions](https://github.com/dsx-ai-factory/nvke/blob/2cfd00081b468d85a4894ec17e9deac13c9d8169/deploy/README.md).
 
 That older implementation prepared this installer in a private attempt-local
 directory and accepted a matching read-only `run.nvkeCheckout` override. Current
@@ -55,7 +55,7 @@ temporary `kind-calico` diagnostic keeps Kind networking and uses tenant Calico;
 neither mode validates the NVIDIA fork, and neither is an automatic fallback.
 The final PASS and retained tenant result name the selection. See the
 [network alternatives](local-nvke-demo.md#explicit-upstream-ovn-alternative) and
-[current validation status](adr/reconciliation.md).
+[current validation status](adr/reconciliation/README.md).
 
 ## Prepare charts without rebuilding them
 
@@ -277,4 +277,4 @@ cleanup or full recorded E2E acceptance.
 A separate successful deployment replay does not establish a fresh one-shot
 rebuild, complete source-built distribution, full OS smoke or qualification.
 Current implementation and runtime limits are recorded in
-[reconciliation](adr/reconciliation.md).
+[reconciliation](adr/reconciliation/README.md).

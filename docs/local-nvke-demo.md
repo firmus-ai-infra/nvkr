@@ -63,7 +63,7 @@ matching 1.36.3 suite image and tools.
 Site installation adds a controller startup probe through the source installer's
 Helm extension point so migrations can finish before HTTP liveness checks start.
 Its allowance follows the remaining operation budget; see the
-[implementation and evidence limits](adr/reconciliation.md#local-arm64-demo-presentation).
+[implementation and evidence limits](adr/reconciliation/local-arm64-demo-presentation.md#local-arm64-demo-presentation).
 
 The native path remains a local diagnostic.
 Ordinary `build` and `e2e` select the host-matched Definition and Environment
@@ -85,7 +85,7 @@ creation. An ordinary Run without those outputs is rejected at admission.
 Local qualification retains its separate ARM64 evidence lane. Architecture contract tests and Plan compilation do not
 establish a completed AMD64 KVM deployment.
 A complete fresh Mac/Linux build, deployment and cleanup result has not yet been
-established for this candidate. See [current implementation and evidence](adr/reconciliation.md)
+established for this candidate. See [current implementation and evidence](adr/reconciliation/README.md)
 and [remaining source-build gaps](full-nvke-source-build.md).
 
 ## 1. Choose your Linux execution host
@@ -445,7 +445,7 @@ bash scripts/nvke-full-arm64-local.sh --build-accelerator tcg \
 ```
 
 Add `--network upstream-ovn` before the attempt for the matched upstream
-selection. These TCG Definitions use the refreshed NVKE `v0.22.0` product pins
+selection. These TCG Definitions use the refreshed NVKE `v0.23.0` product pins
 while retaining their separate build and network selections.
 For the maintained native Mac workflow, `--accelerator tcg` explicitly selects
 software execution for the existing 64K image; it does not select these historical
@@ -460,9 +460,11 @@ of NVKE's source-owned host workflow. Neither Calico nor upstream is NVIDIA-fork
 ## Conformance on the fresh tenant
 
 Add `--conformance` to native Mac or Ubuntu ARM64 `e2e`. Both use the same
-38-output Definition and source pins: the ordinary 32 plus Linux and Darwin
+conformance Definition and source pins: the ordinary selection plus Linux and Darwin
 Hydrophone/kubectl outputs, the matching Linux ARM64 Kubernetes v1.36.3
-conformance image and BusyBox. Each host executes its native tools; the suite
+conformance image and BusyBox. Run
+`bin/nvkr definition inspect --definition inputs/definitions/demo/arm64-nvidia-local-kvm-conformance.json`
+to list the exact outputs. Each host executes its native tools; the suite
 pods run in the same fresh Linux tenant. The kubectl source is v1.36.3 with the
 catalog's declared dependency updates, built using Go 1.27.2. It reports
 `v1.36.3-dirty`; see the [conformance producer](../inputs/definitions/kubernetes-conformance-arm64/README.md)
@@ -750,8 +752,8 @@ the corresponding input is `NVKE_LOCAL_CLONE`.
 Execution is noninteractive and cannot accept sudo passwords. Linux requires the
 documented unattended administrator policy; Mac requires its installed native/vmnet
 prerequisites. These test paths and budgets do not establish a completed runtime
-or conformance result. The [scheduled nightly](nvke-nightly.md) separately consumes
-authenticated published artifacts through `TestNightlyPublishedCandidate`.
+or conformance result. The [scheduled nightly](nvke-nightly.md) uses this fresh-build
+Go flow on public hosted AMD64; its exact-run evidence is recorded separately.
 
 ### Reuse a native site from Go tests
 
@@ -845,15 +847,33 @@ ARM64 guests consume `site-startup-tools-arm64`; AMD64 guests consume
 `site-startup-tools-amd64`. The Mac host uses the Linux ARM64 companion for its
 ARM64 guest. It is built from catalog-selected source;
 the normal startup owner invokes it in its existing admitted controller container.
+The runtime admission and inherited-pipe adapter both support Linux ARM64 and
+AMD64; unsupported platforms remain errors before identity or remote work.
 Building the helper alone
 does not deploy, import SPIRE policy or repair a site.
+
+The controller receives a dedicated, disk-backed 256-MiB `emptyDir` at
+`/tmp/nvkr-site-identity` through its chart's supported `volumes` and
+`volumeMounts` values in the existing per-item override file. Runtime admission
+requires the exact writable mount and bounded volume before staging the held helper. The
+fixed staging command uses the source image's PATH-resolved `sh`; current
+distroless debug images have no `/bin/sh`. Staging and its digest receipt remain
+confined to the dedicated directory. The selected source's root-filesystem and
+user/security settings remain unchanged.
+
+After creating the source policy once, convergence may wait within its existing
+two-minute deadline for the same running containers to become Ready again. Each
+wait validates the pinned pod/container identities, configuration and host boot.
+Other runtime-check failures remain errors. Initial admission, helper probes,
+host mutation and final proof still require Ready containers. Raw identity values
+and errors stay private; unknown completion retains dependent controls.
 
 It uses the upstream generated NodeAgent client and the existing controller CSI
 workload identity. No arbitrary script, credential, socket relay, downloader or
 new Pod is accepted. The request describes selected endpoints and identities.
 Those descriptions must come from the native owner's admitted artifacts and source contract; the
 helper does not grant trust to caller-supplied paths or membership. Its generated
-client is resolved to the same stock NVKE v0.22.0 source.
+client is resolved to the same stock NVKE v0.23.0 source.
 
 The helper reports remote completion independently from its process exit:
 
@@ -904,55 +924,58 @@ and refuses an automatic retry. The Go scoped API retains its documented
 callback lifetime and joined cleanup rules. The TUI reports the handoff as a
 site stage; a site failure does not complete tenant or conformance checks.
 The earlier three-member helper Run exercised the preceding shell implementation;
-it does not validate this source-owned RPC revision. Fresh integrated Mac and Ubuntu
-acceptance of the reduced helper remains externally unverified.
+it does not validate this source-owned RPC revision. The [nightly evidence](nvke-nightly.md#evidence-and-privacy)
+records integrated AMD64 acceptance at its exact NVKR/NVKE revisions. Mac and
+ARM64 integrated acceptance of the reduced helper remain externally unverified.
 
 ## Where the NVKE versions come from
 
-The shared native NVIDIA selection uses stock NVKE `v0.22.0` at commit
-[`400c24fb`](https://github.com/dsx-ai-factory/nvke/commit/400c24fb6465b042be883d6b62472528520d6291)
-and tree `f3afc02f5c92f4aacda3a1655836a91bef093bfe` for all NVKE product sources
+The shared native NVIDIA selection uses stock NVKE `v0.23.0` at commit
+[`2cfd0008`](https://github.com/dsx-ai-factory/nvke/commit/2cfd00081b468d85a4894ec17e9deac13c9d8169)
+and tree `a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53` for all NVKE product sources
 below. NVKR verifies the pinned commit and tree; NVIDIA OVN retains its separate pin.
 
 | Part | Selected source | Owning input |
 | --- | --- | --- |
-| Native host CLI, installer and NICoSim | `v0.22.0` / `400c24fb` | [Shared tools lock](../inputs/catalogs/tools/native/pins.lock.yaml) |
-| Site CLI/controller/charts and provisioned provider | `v0.22.0` / `400c24fb` | [Native site lock](../inputs/catalogs/nvke/native-site/pins.lock.yaml) |
-| OS, agent and kubeadm | `v0.22.0` / `400c24fb` | [Shared release OS lock](../inputs/catalogs/node-images/release/pins.lock.yaml) |
-| Profiles and runbooks | `v0.22.0` / `400c24fb` | [Native profiles lock](../inputs/catalogs/controller-profiles/native-nvidia/pins.lock.yaml) |
-| Upstream SPIRE/TPM agent packaging | `v0.22.0` / `400c24fb` | [Shared release OS lock](../inputs/catalogs/node-images/release/pins.lock.yaml) |
+| Native host CLI, installer and NICoSim | `v0.23.0` / `2cfd0008` | [Shared tools lock](../inputs/catalogs/tools/native/pins.lock.yaml) |
+| Site CLI/controller/charts and provisioned provider | `v0.23.0` / `2cfd0008` | [Native site lock](../inputs/catalogs/nvke/native-site/pins.lock.yaml) |
+| OS, agent and kubeadm | `v0.23.0` / `2cfd0008` | [Shared release OS lock](../inputs/catalogs/node-images/release/pins.lock.yaml) |
+| Profiles and runbooks | `v0.23.0` / `2cfd0008` | [Native profiles lock](../inputs/catalogs/controller-profiles/native-nvidia/pins.lock.yaml) |
+| Upstream SPIRE/TPM agent packaging | `v0.23.0` / `2cfd0008` | [Shared release OS lock](../inputs/catalogs/node-images/release/pins.lock.yaml) |
 | NVIDIA OVN image/chart | [`8af51273`](https://github.com/dsx-ai-factory/ovn-kubernetes/commit/8af51273d52dfa07454435d18d37230e582d797a), 2.4.2 | [Native NVIDIA overlay](../inputs/catalogs/node-images/variants/native-nvidia.json) |
 
 These host architectures use the same NVKE source selections. SPIRE packaging
-and its startup renderer come from the same NVKE `v0.22.0` source as the OS, CLI and controller.
+and its startup renderer come from the same NVKE `v0.23.0` source as the OS, CLI and controller.
 The source-owned lock pins public SPIRE 1.14.1 and TPM plugin 1.9.0 archives.
 The package revision is `1.14.1+tpm1.9.0-4`; no DSX binary is downloaded or
 included by that producer.
 Tenant nodes use join-token attestation and the site uses TPM. This package does
 not provide the plugin for `dsxImds` attestation.
 
-The [implementation and evidence ledger](adr/reconciliation.md#local-arm64-demo-presentation)
+The [implementation and evidence ledger](adr/reconciliation/local-arm64-demo-presentation.md#local-arm64-demo-presentation)
 owns the exact Ubuntu conformance result, completed cleanup, failed Mac attempt
 and limits of each recorded revision. Earlier retained-artifact diagnostics used
 a two-node tenant and do not establish the current four-guest conformance topology.
 
-Native ARM64 NVIDIA Definitions select 32 outputs, or 38 with conformance.
-The default AMD64 Definition selects 34 outputs, including host and site tools.
+`bin/nvkr definition inspect --definition <path>` prints each Definition's exact
+output selection; the default AMD64 Definition,
+`inputs/definitions/demo/amd64-nvidia-local-kvm.json`, also selects host and site tools.
 Package producers inspect actual Debian `Package`/`Architecture` metadata, and the disk
 uses NVKE's renamed Packer build/material schema and QCOW2 output. Changed package
 bytes require a fresh disk build. Maintained release, upstream and TCG product
-selections also use NVKE `v0.22.0`; their third-party pins and historical runtime
+selections also use NVKE `v0.23.0`; their third-party pins and historical runtime
 evidence remain separate. The [scheduled nightly](nvke-nightly.md) resolves latest
-NVKE main, dispatches the NVIDIA ARM64 producer and runs its native Go site smoke
-against that exact Run's authenticated published artifacts. Its runtime consumer
-does not rebuild products or use the upstream OVN producer. The local
-`TestEndToEnd` flow above retains its separate fresh-build scope.
+NVKE main once and runs a fresh local build plus the full native Go site/tenant
+E2E in one public GitHub-hosted AMD64 job. It retains NVIDIA OVN and publishes no
+products. The retired ARM64 published-artifact consumer is not invoked.
 
 The native VM recipe stages `dhcp-identifier: mac` for both hosts through NVKE's
 existing image-input composer. This makes DHCPv4 use the NIC MAC rather than an
 interface-dependent client identifier when NVKE moves networking to its OVS
 bridge. The pinned NVKE checkout stays unchanged. This input change requires a
-fresh image build; complete runtime validation remains pending.
+fresh image build. The [nightly record](nvke-nightly.md#evidence-and-privacy)
+covers its exact AMD64 source overlay; retained defaults and other hosts need
+separate runtime evidence.
 
 For an actual attempt, its Plan and Run own exact source/output identities.
 Update pins with `nvkr catalog pin`, then review matching installer interfaces,

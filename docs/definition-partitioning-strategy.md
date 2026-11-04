@@ -1,10 +1,10 @@
 # Definition partitioning and related Releases
 
-The four-family NVKE pilot implements separate authored Definitions and named production bundles alongside
+The NVKE family pilot implements separate authored Definitions and named production bundles alongside
 the combined candidate. It reuses the current lifecycle and catalog owners; it adds no cross-Release import,
 automatic association file or qualification capability. Hosted family execution and consumer acceptance remain
-unrecorded. The [input instructions](../inputs/definitions/nvke/README.md#four-family-pilot) own commands and
-current selections; [reconciliation](adr/reconciliation.md#maintained-input-and-schema-boundaries) owns
+unrecorded. The [input instructions](../inputs/definitions/nvke/README.md#family-pilot) own commands and
+current selections; [reconciliation](adr/reconciliation/maintained-input-and-schema-boundaries.md#maintained-input-and-schema-boundaries) owns
 implementation and acceptance status.
 
 The pilot incorporates upstream `07181055` (2026-10-20), including `9857feed`'s current catalog pins,
@@ -20,11 +20,12 @@ This document changes no ADR contract or organizational acceptance decision.
 
 | Definition | Outputs | Native targets | Required family |
 | --- | ---: | ---: | --- |
-| [Core](../inputs/definitions/nvke/core.yaml) | 22 | 26 | CLI/operator tools, controller with its bound chart, NICo charts, providers/reference fixture, CAPI and cert-manager bootstrap images |
+| [Core](../inputs/definitions/nvke/core.yaml) | 27 | 33 | CLI/operator tools, ARM64 AICR CLI, controller with its bound chart, NICo charts and Core/Flow images, providers/reference fixture, CAPI and cert-manager bootstrap images |
 | [Services](../inputs/definitions/nvke/services.yaml) | 34 | 34 | SPIRE, PostgreSQL, Temporal and local-path-provisioner charts and native runtime images |
 | [Telemetry](../inputs/definitions/nvke/telemetry.yaml) | 17 | 17 | NKTP chart and native runtime images |
-| [Disks](../inputs/definitions/nvke/disks.yaml) | 4 | 4 | AMD64/ARM64 plain and public-bootstrap FDE disks with complete material closures |
-| Total | 77 | 81 | The combined candidate's complete named output set plus the core family's two NICo charts and the services family's six local-path-provisioner outputs |
+| [Disks](../inputs/definitions/nvke/disks.yaml) | 4 | 4 | Ubuntu 26.04 AMD64/ARM64 plain and public-bootstrap FDE disks with complete material closures |
+| [Disks Ubuntu 24](../inputs/definitions/nvke/disks-ubuntu24.yaml) | 4 | 4 | The same disks on Ubuntu 24.04 through the Ubuntu 24 overlay |
+| Total | 86 | 92 | The combined candidate's complete named output set plus the core family's three NICo charts, two NICo images, ARM64 operator tools and ARM64 AICR CLI, the services family's six local-path-provisioner outputs, and the four Ubuntu 24.04 disks |
 
 Each family selects `inputs/environments/github-nvke-<family>.yaml`, with
 `githubBundle: nvke-<family>`. Generation owns `.github/workflows/nvkr-run-nvke-<family>.yml`
@@ -33,7 +34,7 @@ publication uses `ghcr.io/dsx-ai-factory/nvkr/m2-candidate/<family>`. The result
 `<prefix>/releases@sha256:…` identifies only that family's Release.
 
 The family Environments preserve the combined candidate's independent production registry writer.
-The exact disks publication prefix also retains preparation of the existing private M2 toolchain pins
+The exact `disks` and `disks-ubuntu24` publication prefixes also retain preparation of the existing private M2 toolchain pins
 using the fixed registry reader, before source or producer execution. Namespace lookalikes, child prefixes,
 other families and foreign toolchain owners receive no exception. These are credential projection
 contracts, not evidence of provisioned package access or hosted disk execution.
@@ -271,7 +272,7 @@ commands or trust assumptions; moving or splitting a catalog also requires revie
 overlays. The temporary OS SPIRE packaging-source exception and incomplete DSX IMDS requirement remain
 unchanged by selecting separate output families.
 
-The [catalog-maintenance policy](../inputs/policies/nvke-catalog-maintenance.yaml) lists all four family
+The [catalog-maintenance policy](../inputs/policies/nvke-catalog-maintenance.yaml) lists all five family
 pairs in `additionalRuns`, alongside its existing dependent bundles. One policy checks and regenerates
 the complete explicit bundle closure when shared pins change. Maintenance rejects committed bundles omitted
 from that closure; it does not infer consumers from directory names. Its `sameRelease` groups coordinate
@@ -395,7 +396,7 @@ and required SBOM bundles under policy, without reading payload layers or granti
 authority. `artifact-publication` additionally verifies the complete held payload closure. Browsing/export
 and diagnostic pulling do not replace policy verification. Neither scope grants full-release/qualified
 acceptance or proves that independently accepted Releases work together.
-[consumer scopes](adr/reconciliation.md#consumer-acceptance-scopes),
+[consumer scopes](adr/reconciliation/consumer-acceptance-scopes.md#consumer-acceptance-scopes),
 [publication architecture](publication-architecture.md#signing-and-publication-order),
 [downstream ownership](adr/0019-clusterdefinition-and-provisioning-adapter-boundary.md#3-downstream-systems-own-deployment)
 
@@ -438,7 +439,7 @@ only that carrier, not recursively validate its embedded references.
 Proposed [ADR-26](adr/0026-definition-composition.md) takes a narrower path than a parent Release: a composite
 Definition pins the family Definitions by digest and rebuilds their exact union in one Run and one flat Release,
 without importing family Releases. Reusing published family outputs is deferred to authenticated result reuse.
-It is designed, not implemented.
+Units U1–U7 are implemented and contract-tested only; no hosted composite Run exists.
 
 Any accepted native design must update ADR-17/19/20 and lane/policy contracts in ADR-04/16, reconciliation,
 SADD and domain vocabulary. Required negative contracts include missing/extra/duplicate children,

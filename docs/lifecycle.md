@@ -3,7 +3,7 @@
 This reference covers output completeness, immutable attempts, release verification and SDK use.
 Start with the [quickstart](quickstart.md#build-only-the-cli) for CLI setup and the [concept reference](user-concepts.md)
 for the six public objects. [ADR-17](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/0017-cli-sdk-foundation-and-package-topology.md) owns the
-lifecycle contract; [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md) owns current implementation and evidence.
+lifecycle contract; [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/README.md) owns current implementation and evidence.
 
 ## Declare outputs
 
@@ -53,6 +53,20 @@ bin/nvkr run plan \
   --definition docs/examples/nvke-tutorial/definition.yaml \
   --environment docs/examples/nvke-tutorial/environment-local.yaml
 ```
+
+A composite Definition (proposed ADR-26) pins complete member
+Definitions by their exact `nvkr.definition` digest. `--definition` accepts either kind; a composite path
+and every member and catalog it reaches must lie beneath the working directory. `definition inspect`
+describes the composite, its members and the derived effective Definition. After editing a member,
+re-pin the composite in the same change; generation fails with `unverified-ref` until then:
+
+```sh
+bin/nvkr definition pin --definition <composite.yaml> --check   # report drift, write nothing
+bin/nvkr definition pin --definition <composite.yaml>           # rewrite only the stale digests
+```
+
+Composite qualification, release manifests and runtime Plans are not implemented and fail with
+`engine-capability`.
 
 For saved generated Plans, `run plan --plan <path>` prints the required outputs and instructions;
 `--pretty` provides an indented display view. `run graph` exports complete linked producer/artifact graphs,
@@ -170,7 +184,7 @@ local Run default described above, commands default to `--ui=plain` and keep the
 existing text, canonical JSON or diagram output. On commands with a result
 browser, `--ui=auto` selects it when the terminal is eligible. Explicit JSON or Mermaid output
 and `--ui=tui` are incompatible and fail before input, network or write work.
-`validate`, `run check-artifacts` and `run qualify` retain canonical machine-readable diagnostics and do not offer
+`validate`, `run check-artifacts`, `run qualify` and `run qualify-local` retain canonical machine-readable diagnostics and do not offer
 presentation flags.
 
 ```sh
@@ -531,7 +545,7 @@ checks remain required. The maintained candidate needs no new upstream component
 Delivered-tool smoke still requires the complete native worker results described below. An A receipt alone
 cannot sign evidence or authorize release. Local tests do not establish real hosted signing or complete-set
 consumer acceptance.
-[Reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md#m3-mvp-scope-and-acceptance-boundary) records contract coverage and
+[Reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/m3-mvp-scope-and-acceptance-boundary.md#m3-mvp-scope-and-acceptance-boundary) records contract coverage and
 the outstanding hosted signing, exact-input candidate and consumer acceptance evidence.
 
 ## Publish qualification evidence
@@ -689,7 +703,7 @@ worker/qualifier and independent consumer then exercise positive and negative ca
 remain unproved and are required before production-readiness claims. Local native-container, race and protocol
 tests do not establish GitHub's actual reusable-job names, OIDC claims, production attachment/read-back or
 independent complete-set consumer acceptance. Merge does not waive any runtime verification;
-[reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md#m3-mvp-scope-and-acceptance-boundary)
+[reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/m3-mvp-scope-and-acceptance-boundary.md#m3-mvp-scope-and-acceptance-boundary)
 records their scope and status.
 
 ## Use the SDK

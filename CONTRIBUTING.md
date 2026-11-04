@@ -5,7 +5,7 @@ Definition → Run → Release architecture. Exact-byte reproduction is a separa
 subject; it is not inherited by every pipeline or aggregate artifact. This guide covers the dev loop, the
 contribution mechanics, and the invariants a change must respect. See **[DEVELOPMENT.md](DEVELOPMENT.md)**
 for a deeper environment walkthrough and **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)**. The
-**[ADR reconciliation](docs/adr/reconciliation.md)** is the authority for current support and evidence claims.
+**[ADR reconciliation](docs/adr/reconciliation/README.md)** is the authority for current support and evidence claims.
 
 ## Getting started
 
@@ -13,7 +13,8 @@ for a deeper environment walkthrough and **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.
 git clone https://github.com/dsx-ai-factory/nvkr && cd nvkr
 make help          # list all targets
 make build         # compile bin/nvkr; catalogs are supplied explicitly
-make check         # the full local gate, including the Go vulnerability check
+make check         # the code gate, including the Go vulnerability check
+make ci-check      # every merge-gate check that runs locally
 ```
 
 - [`.go-version`](.go-version) pins the exact Go patch used by CI. The local
@@ -31,11 +32,18 @@ make check         # the full local gate, including the Go vulnerability check
 
 ## Local development equals CI
 
-CI (`.github/workflows/merge-gate.yaml`) runs the same format, license header, vet, lint,
-shellcheck, Python report-tool tests, fast tests, and Go vulnerability checks as `make check`, then also
-compiles the binary. Run `make check` and `make build` before opening a PR. The
-vulnerability check needs access to the Go vulnerability database; see the
-[maintainer procedure](docs/cve-management.md) for triage and scope.
+`make ci-check` runs every check in the merge gate (`.github/workflows/merge-gate.yaml`) that can run locally:
+the `make check` code gate (format, Definition and ledger location, license header, vet, lint, shellcheck, Python
+report-tool tests, fast tests and Go vulnerability checks), the binary build, actionlint, third-party notices
+drift, generated-workflow drift and the Fern docs check. Workflow drift needs read access to the private NVKE
+source, and the docs check needs Node and the Fern CLI. CodeQL and the DCO App run only on GitHub. A test in
+`internal/cicontract` fails when the Makefile's `CI_CHECKS` list and the make targets the merge gate runs
+differ, so add a new hosted check to both.
+
+On a pull request the merge gate runs only the checks whose inputs changed; `make ci-check` runs all of
+them. Run `make ci-check` before opening a PR; without NVKE access, run `make check` and `make build` and say
+which hosted checks you could not run. The vulnerability check needs access to the Go vulnerability
+database; see the [maintainer procedure](docs/cve-management.md) for triage and scope.
 
 Expensive capacity and full-product integration fixtures require
 `NVKR_TEST_EXTENDED=1`; `make test-full` sets it for the race-and-coverage run.
@@ -55,7 +63,7 @@ New source files carry the two-line SPDX header; run `make license` to add it. G
 ## The invariants your change must respect
 
 These are load-bearing. The proposed decisions in [`docs/adr/`](docs/adr/) are the maintained engineering
-baseline pending ratification, and [`docs/adr/reconciliation.md`](docs/adr/reconciliation.md) records the
+baseline pending ratification, and [`docs/adr/reconciliation/`](docs/adr/reconciliation/README.md) records the
 current implementation boundary:
 
 - **Fail closed.** An unpinned source ref, a tag-pinned toolchain, an unknown component or unsupported target platform must error with a coded, distinct exit status — never a silent default.
@@ -107,10 +115,15 @@ may go directly to a focused PR. Report security vulnerabilities privately throu
    contribute the change under Apache-2.0. The `-S` cryptographically signs the commit. See
    [Signing your commits](#signing-your-commits) for one-time setup — both are required.
 4. **Update authority and docs** when behavior changes: update the owning primary ADR directly when its decision
-   changes; add an ADR only for a distinct decision, and update `docs/adr/reconciliation.md` when implementation maturity, evidence, or a disabled path
+   changes; add an ADR only for a distinct decision, and update the affected ADR or section file under `docs/adr/reconciliation/` when implementation maturity, evidence, or a disabled path
    changes. Current product requirements belong in the milestone specification; engineering contracts belong
    in the owning ADR. Superseded plans and requirement exports are available in Git history.
 5. Open the PR with a clear description of *what* and *why*; link any issue.
+
+To test your PR's full build/site/tenant flow before merging, follow
+[Run E2E tests for your pull request](docs/nvke-nightly.md#run-a-workflow-branch-before-merging). You can trigger it on your
+PR branch in your own fork using public GitHub-hosted runners, then include the
+run URL and tested commit in your PR.
 
 ### Review
 

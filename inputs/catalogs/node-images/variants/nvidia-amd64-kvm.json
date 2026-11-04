@@ -2,7 +2,7 @@
   "apiVersion": "nvkr.dev/catalog-overlay/v3",
   "kind": "CatalogOverlay",
   "name": "nvke-native-local-amd64-kvm",
-  "requiresCatalogDigest": "sha256:8a057c640202961148f774b352850be00e7ea98e408e2c3442bf701175d698ec",
+  "requiresCatalogDigest": "sha256:2a41ce872a28d0982e0cef09774b2d7062a915059dcae212744c504d5ec889d4",
   "components": {
     "nvke-node-image-amd64": {
       "component": {
@@ -26,7 +26,7 @@
           "timeoutSeconds": 21600
         },
         "builderType": "vm-image",
-        "commit": "400c24fb6465b042be883d6b62472528520d6291",
+        "commit": "2cfd00081b468d85a4894ec17e9deac13c9d8169",
         "disk": {
           "encryption": "none",
           "format": "qcow2"
@@ -68,13 +68,13 @@
           "linux/amd64"
         ],
         "repo": "https://github.com/dsx-ai-factory/nvke.git",
-        "sourceDateEpoch": 1792548398,
-        "tag": "v0.22.0",
+        "sourceDateEpoch": 1793236039,
+        "tag": "v0.23.0",
         "toolchainImages": {
           "amd64": "sha256:3a570c987e819cc2852258499f3bc56fec088b0ba5e0f45a17124ddcc24d60a0",
           "arm64": "ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3"
         },
-        "treeHash": "f3afc02f5c92f4aacda3a1655836a91bef093bfe",
+        "treeHash": "a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53",
         "vendorCommand": [
           "bash",
           "-ec",
@@ -91,6 +91,7 @@
       "components": [
         "nvke-agent",
         "nvke-cni-calico",
+        "nvke-doca-ovs",
         "nvke-image-inputs",
         "nvke-kubeadm-distro",
         "nvke-node-image-amd64",

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io/fs"
+	"path"
 	"reflect"
 	"regexp"
 	"slices"
@@ -62,6 +63,10 @@ var allowedBuildEnv = map[string]bool{
 	"NICO_SIM_VERSION": true,
 	"NICO_SIM_COMMIT":  true,
 	"NICO_SIM_TREE":    true,
+	// NICo Core/Flow Dockerfile version, revision and commit-date arguments, rendered from the source lock.
+	"NICO_VERSION": true,
+	"NICO_COMMIT":  true,
+	"NICO_DATE":    true,
 	// Upstream CWE Dockerfile build arguments, rendered from the source lock.
 	"BUILD_VERSION": true,
 	"GIT_VERSION":   true,
@@ -151,6 +156,15 @@ func (g *Graph) Validate() error {
 			}
 		}
 		if node.Kind != KindBuild {
+			continue
+		}
+		if node.BuilderType == BuilderPinnedTool {
+			if err := validateMaterialDependencies(node, byID, ""); err != nil {
+				return err
+			}
+			if err := validatePinnedToolMaterials(node, byID); err != nil {
+				return err
+			}
 			continue
 		}
 		fetch, err := sourceDependency(node, byID)
@@ -310,6 +324,9 @@ func VendorSpecIdentity(command []string, image string) (string, error) {
 func validateBuildNode(n Node) error {
 	if n.BuilderType == BuilderVMImage {
 		return validateVMImageNode(n)
+	}
+	if n.BuilderType == BuilderPinnedTool {
+		return validatePinnedToolNode(n)
 	}
 	if err := rejectUnexpectedNodeFields(n, allowFields(
 		"requirements", "executionBinding",
@@ -685,6 +702,10 @@ func validateMaterialDependencies(node Node, byID map[string]Node, fetchID strin
 				"build node %q material %q does not bind producer %q for component %q",
 				node.ID, binding.Binding, binding.Producer, binding.Component)
 		}
+		if producer.OutputType == OutputOCILayout {
+			return e.New(e.CodeEngineCapability,
+				"build node %q material %q binds an OCI layout, which is not one regular file", node.ID, binding.Binding)
+		}
 		expected[binding.Producer] = binding
 	}
 	for _, dependency := range node.Needs {
@@ -744,6 +765,9 @@ func validatePullNode(n Node) error {
 		if (n.ExecutableArchive.Format != "" && n.ExecutableArchive.Format != "zip") || n.OutputType != "host-package" || !strings.HasPrefix(n.Artifact, "https://") ||
 			!safeRelativePath(n.ExecutableArchive.Member) || !canonical.IsDigest(n.ExecutableArchive.Digest) {
 			return e.New(e.CodeInvalidCatalog, "release executable %q requires a pinned HTTPS archive and exact regular member", n.ID)
+		}
+		if err := validateArchiveCompanions(n); err != nil {
+			return err
 		}
 	}
 	switch n.OutputType {
@@ -905,6 +929,20 @@ func platformArch(platform string) (string, bool) {
 		return "", false
 	}
 	return target.Arch(platform), true
+}
+
+// Companions land beside the executable under their base names; every
+// delivered name must be distinct and every member exactly pinned.
+func validateArchiveCompanions(n Node) error {
+	names := map[string]bool{n.Component: true, path.Base(n.ExecutableArchive.Member): true}
+	for i, companion := range n.ExecutableArchive.Companions {
+		if !safeRelativePath(companion.Member) || !canonical.IsDigest(companion.Digest) ||
+			(i > 0 && n.ExecutableArchive.Companions[i-1].Member >= companion.Member) || names[path.Base(companion.Member)] {
+			return e.New(e.CodeInvalidCatalog, "release executable %q requires sorted, distinct and pinned companion members", n.ID)
+		}
+		names[path.Base(companion.Member)] = true
+	}
+	return nil
 }
 
 func safeRelativePath(value string) bool {

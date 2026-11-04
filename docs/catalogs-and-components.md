@@ -136,6 +136,49 @@ both identities and scans all archive entries with bounded standard-library read
 archive paths into the filesystem. Archive format is part of the compiled identity. Existing tar-gzip IR
 records retain their original encoding.
 
+An archive `tool` may also list sorted `companions`, exact members that ship beside the executable. A
+companion is delivered under its base name with mode 0644 in the same executable output. `catalog pin`
+records each companion digest, and observation and packaging check it against that pin. The
+[AICR CLI catalog](https://github.com/dsx-ai-factory/nvkr/blob/main/inputs/catalogs/tools/aicr-arm64/README.md)
+delivers `aicr-attestation.sigstore.json` beside `aicr` this way. A companion is pinned bytes, not verified
+upstream evidence.
+
+## Pinned-tool producers
+
+A `builderType: pinned-tool` component runs a source's pinned tool once, offline, inside a digest-pinned
+`toolchainImage`, and produces new bytes. It names the source with `tool`, has no `source` or `fromSource`, and
+declares exactly one platform equal to the tool's platform:
+
+```yaml
+components:
+  aicr-gb200-training-recipe:
+    builderType: pinned-tool
+    tool: aicr
+    toolchainImage: registry.example/runner@sha256:<digest>
+    platforms: [linux/arm64]
+    outputType: file
+    artifactPath: recipe.yaml
+    toolArgs: [recipe, --service, nvke, --accelerator, gb200, --os, ubuntu, --intent, training,
+      --output, '{{.Output}}/recipe.yaml']
+```
+
+`toolArgs` is the argument vector after the executable; there is no shell. Arguments may use only
+`{{.Output}}`, `{{.Arch}}` and `{{.Material "<binding>"}}`, and every `materials` binding needs a token.
+`toolEnv` adds literal variables but cannot set `HOME`, `TMPDIR`, `TZ` or `LC_ALL`. The run has no network,
+so tool modes that push, download or sign keylessly fail. The toolchain image must provide `/bin/sh` and
+`/usr/bin/env` for the executor's fixed bootstrap.
+
+A `file` result must be a material: the output must also select a producer that binds it, and the tool must
+leave exactly that one regular file. Like every selected component, the file is also a member of that output.
+An executable bundle installs it at `/usr/local/bin/<name>` with mode 0644, as it does tarball assets, never as
+an executable. A material is staged under its binding name, so name the binding with the
+extension the tool expects, such as `recipe.yaml` for AICR. For `outputType: oci-layout`, `{{.Output}}` is an
+absent path the tool creates, and it must leave exactly one OCI layout there. That form is reserved for bundle
+outputs, and selecting it fails until layout import is available. Execution requires Linux, and a Definition that selects `sbomTool` cannot yet include a
+`file` producer. [ADR-27](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/0027-pinned-tool-producers.md)
+and [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/README.md) record the
+remaining limits.
+
 ## Build tools and version stamps
 
 The catalog also selects how source components are built:
@@ -146,9 +189,10 @@ The catalog also selects how source components are built:
 | `buildkit-rootless` | BuildKit produces a container-image archive. |
 | `vm-image` | A source-owned VM-image build; connected execution uses direct Packer. |
 | `nix` | A locked flake build in a pinned container; qualified realized-input observation remains unavailable. |
+| `pinned-tool` | One run of a source's pinned release tool, offline, with no source fetch. See [Pinned-tool producers](#pinned-tool-producers). |
 
 A builder type describes production, while an output format describes delivery. Runtime and evidence limits
-still apply; [ADR-10](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/0010-pluggable-builder-types.md) and [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md) record them.
+still apply; [ADR-10](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/0010-pluggable-builder-types.md) and [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/README.md) record them.
 
 A **toolchain substitution** changes the build container for explicitly named components and an architecture,
 checking the expected old digest. It keeps the existing source and command declarations. The
@@ -165,8 +209,8 @@ versionStamp:
   NVKECTL_DATE: '{{.Date}}'
 ```
 
-These are build inputs, not labels added after the build. For the pinned tag `v0.22.0`,
-`.ModuleTag` is `v0.22.0`; `.Version` is `0.22.0-beta.6`.
+These are build inputs, not labels added after the build. For the pinned tag `v0.23.0`,
+`.ModuleTag` is `v0.23.0`; `.Version` is `0.23.0`.
 
 ## Debian packages
 
@@ -180,7 +224,7 @@ The [NVSentinel catalog](https://github.com/dsx-ai-factory/nvkr/blob/main/inputs
 declares OCI, Helm, executable and Debian outputs. Its OS experiment places the same DEB in the existing
 composer/Packer `debs/` folder and regenerates the local APT index. Upstream source is unchanged. Placement
 does not install or enable NVSentinel; local composition metadata is not a full-content dependency SBOM,
-ABI proof or runtime acceptance. See [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation.md).
+ABI proof or runtime acceptance. See [reconciliation](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/adr/reconciliation/README.md).
 
 ## Run the local lab
 

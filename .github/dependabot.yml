@@ -27,6 +27,23 @@ updates:
       govulncheck-tool:
         patterns: ["*"]
 
+  # The workflow linter, kept out of the production module graph the same way.
+  - package-ecosystem: gomod
+    directory: /toolchains/actionlint
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: all
+    # actionlint v1.7.12 requires go.yaml.in/yaml/v4 v4.0.0-rc.3 and fails to
+    # compile against rc.7, whose error types changed. Let the yaml version
+    # follow actionlint's own requirement; an actionlint bump raises it.
+    ignore:
+      - dependency-name: go.yaml.in/yaml/v4
+    groups:
+      actionlint-tool:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     # Generated workflow pins must change through NVKR inputs and regeneration.

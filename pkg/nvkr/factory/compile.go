@@ -5,6 +5,7 @@ package factory
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 
 	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/catalog"
@@ -28,11 +29,42 @@ func compileDocumentsWithLoader(ctx context.Context, definitionPath string, defi
 	loadStack func(context.Context, authored.Catalog) (*catalog.Stack, error),
 	runtimeSourceCommit ...string,
 ) (*Plan, error) {
+	return compileDocumentsFor(ctx, definitionPath, definition, environmentPath, delivery, generatorVersion, loadStack, nil, runtimeSourceCommit...)
+}
+
+// compileDocumentsFor compiles a plain Definition (nil record) or a composite's
+// effective Definition, binding the composition record before Plan validation.
+// Each distinct catalog stack loads once per compile.
+func compileDocumentsFor(ctx context.Context, definitionPath string, definition authored.Definition,
+	environmentPath string, delivery authored.Environment, generatorVersion string,
+	loadStack func(context.Context, authored.Catalog) (*catalog.Stack, error), record *CompositionRecord,
+	runtimeSourceCommit ...string,
+) (*Plan, error) {
 	if ctx == nil {
 		return nil, e.New(e.CodeUsage, "definition compilation requires a context")
 	}
 	if err := admitInputs(definition, delivery); err != nil {
 		return nil, err
+	}
+	if err := admitDefinitionForm(delivery, record); err != nil {
+		return nil, err
+	}
+	// Equal selections share one *catalog.Stack for this compile. Consumers treat
+	// it as read-only and clone or snapshot catalog state before changing it.
+	stacks := map[string]*catalog.Stack{}
+	load := loadStack
+	loadStack = func(ctx context.Context, spec authored.Catalog) (*catalog.Stack, error) {
+		// Quote every element so no overlay list aliases another (nil and [""] differ).
+		key := fmt.Sprintf("%q", append([]string{spec.Base}, spec.Overlays...))
+		if stack, ok := stacks[key]; ok {
+			return stack, nil
+		}
+		stack, err := load(ctx, spec)
+		if err != nil {
+			return nil, err
+		}
+		stacks[key] = stack
+		return stack, nil
 	}
 	stack, err := loadStack(ctx, definition.Catalog)
 	if err != nil {
@@ -49,8 +81,8 @@ func compileDocumentsWithLoader(ctx context.Context, definitionPath string, defi
 		}
 		targetStacks[target.Name] = targetStack
 	}
-	return compileWithTargetStacks(ctx, definition, delivery, stack, targetStacks, generatorVersion,
-		filepath.ToSlash(filepath.Clean(definitionPath)), filepath.ToSlash(filepath.Clean(environmentPath)), runtimeSourceCommit...)
+	return compileWithTargetStacksFor(ctx, definition, delivery, stack, targetStacks, generatorVersion,
+		filepath.ToSlash(filepath.Clean(definitionPath)), filepath.ToSlash(filepath.Clean(environmentPath)), record, runtimeSourceCommit...)
 
 }
 
@@ -96,6 +128,12 @@ func Compile(ctx context.Context, definition authored.Definition, delivery autho
 
 func compileWithTargetStacks(ctx context.Context, definition authored.Definition, delivery authored.Environment, stack *catalog.Stack,
 	targetStacks map[string]*catalog.Stack, generatorVersion, definitionPath, environmentPath string, runtimeSourceCommit ...string) (*Plan, error) {
+	return compileWithTargetStacksFor(ctx, definition, delivery, stack, targetStacks, generatorVersion, definitionPath, environmentPath, nil, runtimeSourceCommit...)
+}
+
+func compileWithTargetStacksFor(ctx context.Context, definition authored.Definition, delivery authored.Environment, stack *catalog.Stack,
+	targetStacks map[string]*catalog.Stack, generatorVersion, definitionPath, environmentPath string, record *CompositionRecord,
+	runtimeSourceCommit ...string) (*Plan, error) {
 	if ctx == nil {
 		return nil, e.New(e.CodeUsage, "factory compilation requires a context")
 	}
@@ -106,6 +144,9 @@ func compileWithTargetStacks(ctx context.Context, definition authored.Definition
 		return nil, e.New(e.CodeInvalidCatalog, "factory compilation requires a resolved catalog stack")
 	}
 	if err := admitInputs(definition, delivery); err != nil {
+		return nil, err
+	}
+	if err := admitDefinitionForm(delivery, record); err != nil {
 		return nil, err
 	}
 	// Hold independent authored input values so callers cannot change executable identity.
@@ -175,6 +216,12 @@ func compileWithTargetStacks(ctx context.Context, definition authored.Definition
 	plan.Graph, err = compileArtifactGraph(*plan, tools, packageSpecs)
 	if err != nil {
 		return nil, err
+	}
+	if record != nil {
+		if plan.DefinitionDigest, err = authored.CompositeDigest(record.Metadata, record.Members); err != nil {
+			return nil, err
+		}
+		plan.SchemaVersion, plan.Composition = CompositePlanSchemaVersion, record.Clone()
 	}
 	if err := plan.Validate(); err != nil {
 		return nil, err

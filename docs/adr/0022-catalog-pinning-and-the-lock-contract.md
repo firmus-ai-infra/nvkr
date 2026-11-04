@@ -1,9 +1,9 @@
 # ADR-22 — Catalog pinning & the lock contract (declare vs. resolve)
 
 - **Decision status:** Proposed (implementation-aligned draft; pending named-decider ratification)
-- **Implementation maturity:** Tracked separately in `reconciliation.md`; implementation and test evidence do not
+- **Implementation maturity:** Tracked separately in `reconciliation/README.md`; implementation and test evidence do not
   constitute governance ratification.
-- **Acceptance-test maturity:** Tracked separately in `reconciliation.md`; green unit tests alone do not
+- **Acceptance-test maturity:** Tracked separately in `reconciliation/README.md`; green unit tests alone do not
   establish end-to-end conformance.
 - **Deciders:** [INPUT NEEDED — author + reviewers]
 - **Index:** ADR-22 in the consolidated NVKR ADR set (added to give the pin/lock model a decided home).
@@ -450,7 +450,7 @@ on supported filesystems and publication of a separately versioned catalog-data 
 ## Tool release assets
 
 A source may declare `tool` with `format` (`raw` or `tar-gzip`), a version-rendered HTTPS `url`,
-`platform` (`linux/amd64` or `linux/arm64`), and `executablePath`. Tool names are source names; they do not
+`platform` (`linux/amd64` or `linux/arm64`), `executablePath`, and optional `companions`. Tool names are source names; they do not
 include release versions. The same source constraint and tag-prefix selection used by other sources governs
 `catalog pin` and `catalog bump`. Each declared tool currently selects one platform; multiple platforms use
 distinct source names. No platform fallback is inferred.
@@ -475,6 +475,21 @@ one exact bounded regular member after archive verification, then rechecks the
 executable digest. Archive selection is byte-preserving acquisition, not a build
 or an upstream authenticity claim. The selected executable and transport/member
 pins participate in logical Build identity; transport locations do not.
+
+`companions` lists further exact archive members, sorted and unique, that ship
+beside the executable. Raw assets have none. Each companion's base name must differ
+from the executable's member and component names and from every other companion.
+The source tool lock records one digest per companion, and a declaration/lock
+mismatch fails loading. Acquisition selects each companion from the same verified
+archive with the same selector, checks its digest and publishes it before the
+executable. The companion becomes a separate `release-companion` output of the
+same acquisition. Terminal observation, executable packaging and lifecycle output
+observation each recheck it against its pin. An executable output delivers it
+under its base name with mode 0644 beside the executable. It is not a producer
+member and is never scanned as one. Provenance records each companion as an
+`archive`/`member` dependency. Companion pins participate in logical Build
+identity. A companion is pinned bytes, not verified upstream evidence: an
+attestation shipped this way is delivered, not authenticated.
 The shared source-tool selector admits at most 4,096 members and 1 GiB of both
 physical expanded stream bytes and aggregate logical member bytes; sparse holes
 cannot evade the latter. Reads of synthesized member bytes remain cancellation-aware.

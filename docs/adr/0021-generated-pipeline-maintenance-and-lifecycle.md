@@ -1,9 +1,9 @@
 # ADR-21 — Generated-pipeline maintenance & lifecycle
 
 - **Decision status:** Proposed (implementation-aligned draft; pending named-decider ratification)
-- **Implementation maturity:** Tracked separately in `reconciliation.md`; implementation and test evidence do not
+- **Implementation maturity:** Tracked separately in `reconciliation/README.md`; implementation and test evidence do not
   constitute governance ratification.
-- **Acceptance-test maturity:** Tracked separately in `reconciliation.md`; green unit tests alone do not
+- **Acceptance-test maturity:** Tracked separately in `reconciliation/README.md`; green unit tests alone do not
   establish end-to-end conformance.
 - **Deciders:** [INPUT NEEDED — author + reviewers]
 - **Index:** ADR-21 in the consolidated NVKR ADR set (added to close the day-2 pipeline-maintenance gap).
@@ -49,6 +49,15 @@ The named producer's workflow display name is `nvkr-project-<name>`, disjoint fr
 the default `nvkr-run-<Definition name>` and development `nvkr-dev-<Definition name>`.
 This keeps same-Definition bundles separate under GitHub's workflow-based concurrency
 and prevents a named producer from matching the default qualifier's display-name trigger.
+That separation is not a destination-wide lock. ADR-20's S3 extension restricts each enrolled physical
+namespace to one repository, workflow path, display name/bundle, exact ref and evaluated non-canceling
+group. Another repository, workflow, bundle, ref or transport alias cannot bypass that enrolled owner.
+The extension's admission remains implementation work.
+Cross-Run namespace serialization and atomic completion belong exclusively to `lifecycle`'s private
+delivery-namespace store (ADR-20); the workflow concurrency group is not that store.
+The enrolled workflow path is the bundle's entry workflow. Its exact manifest-owned partition workers remain
+within that entry's closure; they grant no second namespace owner or competing concurrency group. ADR-18's
+rule keeping OIDC jobs in the entry workflow remains in force.
 Workflow file paths and explicit signing identities retain the namespace contract above.
 Every generated execution, recovery and utility-container command selects that exact
 Plan path; validation rejects a bundle whose paths differ from the admitted Environment.
@@ -68,7 +77,7 @@ the largest worker at 134,308 bytes and unchanged signer jobs. These are local g
 Workers never contain OIDC jobs. A fixed `<entry-stem>__signer.yml` signer workflow is proposed only
 together with ADR-18 §8's explicit certificate-identity and trust-policy migration. It is not an admitted
 member name; the reserved child-namespace rules below fail closed on such a file. Workers share one complete Plan and do not add
-an authored lifecycle object or a child Release. ADR-18 owns scheduling and result propagation. [Reconciliation](reconciliation.md#output-local-publication-and-metadata-assembly)
+an authored lifecycle object or a child Release. ADR-18 owns scheduling and result propagation. [Reconciliation](reconciliation/output-local-publication-and-metadata-assembly.md#output-local-publication-and-metadata-assembly)
 records one successful earlier-head full development execution of this opt-in topology; it predates the core
 execution-model extraction and per-worker fragment forwarding, and proves neither current-head worker execution,
 full-product failure/cancellation recovery nor production qualification. Optional qualification
@@ -81,6 +90,9 @@ ownership are outside generation (ADR-16/18).
 
 The Environment's explicit GitHub development mode selects a second fixed generated layout:
 `.github/workflows/nvkr-dev.yml`, `.github/nvkr-dev/plan.json`, and `.github/nvkr-dev/manifest.json`.
+Proposed ADR-26 §9 additionally admits, for composite Definitions only, a named signed development layout
+`.github/workflows/nvkr-dev-<name>.yml` and `.github/nvkr-dev-<name>/`, published under its own
+`development-<name>` namespace with a signer bound to that workflow; it never shares the fixed layout.
 The default production layout remains `.github/workflows/nvkr-run.yml` and `.github/nvkr-run/`. Both use the same
 compiler, renderer, exact validation and writer. The admitted Environment selects these paths; callers
 cannot relocate one bundle into the other layout. Each manifest owns only its own payloads and lock, so
@@ -92,8 +104,9 @@ run-attempt destinations are derived by the execution owner under ADR-20; runtim
 rewrite generated inputs or bypass drift checks. The maintained development bundle uses the complete M2
 Definition with its separate development Environment.
 
-`githubDevelopment: true` with a nonempty `githubBundle` is unsupported and
-returns `CodeEngineCapability` before catalog resolution or generated-output work.
+For a plain Definition, `githubDevelopment: true` with a nonempty `githubBundle` is unsupported and
+returns `CodeEngineCapability` before catalog resolution or generated-output work. A composite without
+`githubBundle` is refused the same way, because the fixed layout is reserved (ADR-26 §9).
 Unnamed development and named production remain separate supported selections.
 
 Execution identity and transaction identity are separate. The Plan binds authored inputs and every executable
@@ -195,6 +208,18 @@ admission and its prior-manifest validation reject reserved legacy producer chil
 write or retire them. The unused qualified `bundle` command, bundle manifest and
 transport-plan writer are removed. The opt-in M3 qualification pair has its own narrowly scoped ownership
 manifest; it does not replace or reinterpret the producer Plan bundle.
+
+Top-level regeneration and generated-stage admission take separate routes. Only `run generate` writes,
+qualification generation and catalog maintenance render through the `factory.Render` generation seam. A
+top-level `run generate --check` also takes it, but only when the hidden diagnostic `--projection-pilot`
+flag selects the reference projection plugin, reached in-process or out-of-process through one contract.
+Generated bootstraps and stages run `run generate --check`, runtime Plan preparation, runtime input
+installation and checking, and action description. These re-emit only through the core's in-binary GitHub
+projection, never that seam, so a generator selected at top-level generation cannot run inside a generated
+stage. A seam and adapter-launcher trap over every stage owner, a selector trap on the bootstrap check
+invocation and an inventory of every committed generated closure contract-test this boundary. The pilot is
+diagnostic only: runtime Plan refresh refuses its selection, and core admits the plugin's bundle with the
+exact validator before any write, whichever transport carried it.
 
 Committed bundle members and `exec-node`'s diagnostic canonical graph are opened as bounded, nonblocking,
 no-follow regular file capabilities and revalidated against their live pathname after reading. A symlink, FIFO,

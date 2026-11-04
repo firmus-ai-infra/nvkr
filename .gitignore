@@ -17,6 +17,8 @@
 
 # advisory-lock guard `catalog pin`/`bump` leaves beside a machine-managed lock
 .pins.lock.yaml.lock
+# persistent advisory-lock guard `definition pin` leaves beside a composite Definition
+.*.pin.lock
 
 # test / coverage
 coverage.out
@@ -28,6 +30,9 @@ coverage.html
 
 # generated nvkr-exec helper build artifacts (binaries); the lock is committed
 /toolchains/nvkr-exec/out/
+
+# locked Fern CLI installed by `make fern-install`
+/tools/fern/node_modules/
 
 # personal agent overlay (see AGENTS.md "Local Overlay")
 AGENTS.local.md

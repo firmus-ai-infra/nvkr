@@ -6,8 +6,8 @@ source-owned Packer project. Architecture-dependent build and vendor argv use th
 substitution. The AMD64 disk root and ARM64 execution overlay are explicit producer declarations, not one
 architecture-neutral root.
 
-The source lock and ARM64 producer overlay select NVKE `v0.22.0` at
-`400c24fb6465b042be883d6b62472528520d6291`. The release tag alone does not establish
+The source lock and ARM64 producer overlay select NVKE `v0.23.0` at
+`2cfd00081b468d85a4894ec17e9deac13c9d8169`. The release tag alone does not establish
 build, runtime or coordinated release acceptance.
 
 Local development and CI are parallel supported paths sharing material producers, not substitutes for one another.
@@ -137,4 +137,4 @@ cannot be shared through an unauthenticated directory/cache copy.
 
 The workflow owns selection and transport. NVKR modules own catalog validation, execution admission,
 held disk observation and completeness. [ADR-18](../../../docs/adr/0018-pipeline-ir-and-ci-adapter-emission.md)
-owns execution policy; [reconciliation](../../../docs/adr/reconciliation.md) owns current evidence status.
+owns execution policy; [reconciliation](../../../docs/adr/reconciliation/README.md) owns current evidence status.
