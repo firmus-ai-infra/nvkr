@@ -2,7 +2,7 @@
   "apiVersion": "nvkr.dev/catalog-overlay/v3",
   "kind": "CatalogOverlay",
   "name": "nvke-os-ubuntu24",
-  "requiresCatalogDigest": "sha256:349b22f1350305472cd0c88a09ea27b6fbb988f4cbd190ee68b2245823a1c5f4",
+  "requiresCatalogDigest": "sha256:ffd9725dd455a7e0a735225a17f68fd7683c7be09450eb1ba700c0a02efda4e4",
   "components": {
     "nvke-agent": {
       "component": {
@@ -44,10 +44,10 @@
           "linux/arm64"
         ],
         "fromSource": true,
-        "repo": "https://github.com/dsx-ai-factory/nvke.git",
-        "tag": "v0.23.0",
-        "commit": "2cfd00081b468d85a4894ec17e9deac13c9d8169",
-        "treeHash": "a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53",
+        "repo": "https://github.com/firmus-ai-infra/nvke.git",
+        "tag": "9114d841032c47614d21062ae333340730c088c2",
+        "commit": "9114d841032c47614d21062ae333340730c088c2",
+        "treeHash": "2a08de9723d51e9acf3def48ea2ced1a5e798ca3",
         "toolchainImages": {
           "amd64": "ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:1415193ed0c50cd9c3d5b3bbd6207728262db3469c6ccd36717d47a6f50e3c0e",
           "arm64": "ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:0b849513367b69faaa033aaf602f60d42309d7f42ff0045f8c354a4e804a82a3"
@@ -65,7 +65,7 @@
           "-ec",
           "test ! -e os-image/packages/doca-ovs/nvkr-debs\ntest ! -L os-image/packages/doca-ovs/nvkr-debs\n# The source Makefile owns the DOCA version, package set and committed\n# per-deb SHA-256 lock. Stage beside the checkout; protected vendors\n# mount /tmp with noexec.\nbundle_root=\"$(mktemp -d \"$(dirname \"$PWD\")/nvkr-doca.XXXXXXXX\")\"\ntrap 'rm -rf -- \"$bundle_root\"' EXIT\ntimeout --kill-after=10s 540s make -C os-image/packages/doca-ovs debs \\\n  ARCH={{.Arch}} UBUNTU_SERIES=24.04 \\\n  DIST_DIR=\"$bundle_root/dist\" OUT_DIR=\"$bundle_root/debs\"\nmkdir os-image/packages/doca-ovs/nvkr-debs\ncp \"$bundle_root/debs/\"*.deb os-image/packages/doca-ovs/nvkr-debs/\n"
         ],
-        "sourceDateEpoch": 1793236039
+        "sourceDateEpoch": 1793763887
       }
     },
     "ubuntu-installer-iso-amd64": {
