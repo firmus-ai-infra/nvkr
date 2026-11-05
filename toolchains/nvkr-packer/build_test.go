@@ -113,7 +113,7 @@ esac
 			cmd := exec.CommandContext(ctx, "bash", args...)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
 				"TEST_ARCH="+runtime.GOARCH, "TEST_IMAGE_ID="+tc.inspected, "TEST_EXPECTED_ID="+measured,
-				"TEST_SMOKE_EXIT="+tc.smokeExit, "TEST_BUILD_EXIT="+tc.buildExit, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=",
+				"TEST_SMOKE_EXIT="+tc.smokeExit, "TEST_BUILD_EXIT="+tc.buildExit, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=",
 				"TMPDIR="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics
@@ -238,7 +238,7 @@ func TestToolchainRejectsBootstrapGoDriftBeforeRuntime(t *testing.T) {
 				defer cancel()
 				cmd := exec.CommandContext(ctx, "bash", args...)
 				cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+filepath.Join(dir, "docker"),
-					"TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=")
+					"TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=")
 				output, err := cmd.CombinedOutput()
 				if err == nil || !strings.Contains(string(output), ".go-version") {
 					t.Fatalf("bootstrap Go drift was not diagnosed: %v:\n%s", err, output)
@@ -332,7 +332,7 @@ esac
 			cmd := exec.CommandContext(ctx, "bash", "build.sh", "--arch", runtime.GOARCH)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
 				"TEST_BUILD_EXIT="+tc.buildExit, "TEST_CREATE_EXIT="+tc.createExit, "TEST_RM_EXIT="+tc.rmExit,
-				"TEST_ARCH="+runtime.GOARCH, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=",
+				"TEST_ARCH="+runtime.GOARCH, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=",
 				"NVKR_PACKER_BUILDKIT_IMAGE=", "NVKR_BUILDKIT_CONFIG=", "TMPDIR="+dir)
 			if tc.config {
 				cmd.Env = append(cmd.Env, "NVKR_BUILDKIT_CONFIG="+config)
@@ -424,7 +424,7 @@ func TestToolchainRejectsBuilderInputsBeforeRuntime(t *testing.T) {
 			value := strings.ReplaceAll(tc.value, "{dir}", dir)
 			cmd := exec.CommandContext(t.Context(), "bash", filepath.Join(here, "build.sh"), "--arch", runtime.GOARCH)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker,
-				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_PACKER_BUILDKIT_IMAGE=", "NVKR_BUILDKIT_CONFIG=", tc.key+"="+value)
+				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=", "NVKR_PACKER_BUILDKIT_IMAGE=", "NVKR_BUILDKIT_CONFIG=", tc.key+"="+value)
 			out, err := cmd.CombinedOutput()
 			if err == nil || !strings.Contains(string(out), tc.message) {
 				t.Fatalf("got %v: %s", err, out)
@@ -506,10 +506,14 @@ esac
 			cmd := exec.CommandContext(ctx, "bash", "build.sh", "--arch", runtime.GOARCH)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
 				"TEST_BUILD_EXIT="+tc.buildExit, "TEST_LOAD_EXIT="+tc.loadExit, "TEST_ARCH="+runtime.GOARCH,
-				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "TMPDIR="+dir,
+				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=", "TMPDIR="+dir,
 				fmt.Sprintf("TEST_EMPTY_ARCHIVE=%t", tc.emptyArchive))
+			trustCA := filepath.Join(dir, "trust-ca.pem")
 			if tc.localInputs {
-				cmd.Env = append(cmd.Env, "NVKR_BUILD_ARCHIVES="+dir, "NVKR_BUILD_CA_BUNDLE="+fake)
+				if err := os.WriteFile(trustCA, []byte(syntheticTrustCA), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd.Env = append(cmd.Env, "NVKR_BUILD_ARCHIVES="+dir, "NVKR_BUILD_CA_BUNDLE="+fake, "NVKR_TOOLCHAIN_TRUST_CA="+trustCA)
 			}
 			output, err := cmd.CombinedOutput()
 			if (err != nil) != tc.wantError {
@@ -526,11 +530,25 @@ esac
 				t.Fatal(err)
 			}
 			if tc.localInputs {
-				for _, flag := range []string{"--build-context nvkr_archives=" + dir, "--build-arg NVKR_ARCHIVE_MODE=local", "--secret id=nvkr_ca_bundle,src=" + fake} {
+				resolvedDir, err := filepath.EvalSymlinks(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolvedTrustCA := filepath.Join(resolvedDir, "trust-ca.pem")
+				for _, flag := range []string{"--build-context nvkr_archives=" + dir, "--build-arg NVKR_ARCHIVE_MODE=local", "--secret id=nvkr_ca_bundle,src=" + fake,
+					"--secret id=nvkr_trust_ca,src=" + resolvedTrustCA, "--build-arg NVKR_TRUST_CA=required"} {
 					if count := strings.Count(string(calls), flag); count != 1 {
 						t.Fatalf("input binding %q appears %d times, want exactly once: %s", flag, count, calls)
 					}
 				}
+				if !tc.wantError {
+					mount := "--mount type=bind,src=" + resolvedTrustCA + ",dst=/nvkr/trust-ca.pem,readonly"
+					if count := strings.Count(string(calls), mount); count != 1 {
+						t.Fatalf("native smoke trust CA mount appears %d times, want exactly once: %s", count, calls)
+					}
+				}
+			} else if strings.Contains(string(calls), "nvkr_trust_ca") || strings.Contains(string(calls), "NVKR_TRUST_CA") || strings.Contains(string(calls), "dst=/nvkr/trust-ca.pem") {
+				t.Fatalf("trust CA bound without NVKR_TOOLCHAIN_TRUST_CA: %s", calls)
 			}
 			loaded := strings.Contains(string(calls), "image load --input ")
 			wantLoad := tc.buildExit == "0" && !tc.emptyArchive
@@ -598,7 +616,7 @@ func TestToolchainRejectsInvalidBuildInputsBeforeRuntime(t *testing.T) {
 				value = fake
 			}
 			cmd := exec.CommandContext(t.Context(), "bash", "build.sh", "--arch", runtime.GOARCH)
-			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", tc.key+"="+value)
+			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=", tc.key+"="+value)
 			out, err := cmd.CombinedOutput()
 			if err == nil || !strings.Contains(string(out), tc.message) {
 				t.Fatalf("got %v: %s", err, out)
@@ -607,6 +625,88 @@ func TestToolchainRejectsInvalidBuildInputsBeforeRuntime(t *testing.T) {
 				t.Fatalf("runtime reached before input admission: %v", err)
 			}
 		})
+	}
+}
+
+// syntheticTrustCA is PEM-shaped placeholder text, not a real certificate.
+const syntheticTrustCA = "-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDLVRFU1QtQ0EK\n-----END CERTIFICATE-----\n"
+
+func TestToolchainRejectsInvalidTrustCABeforeRuntime(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("requires jq")
+	}
+	const notPEM = "toolchain trust CA must contain only PEM CERTIFICATE blocks"
+	for _, tc := range []struct {
+		name, runtime, contents, message string
+		absent                           bool
+	}{
+		{name: "missing file", runtime: "docker", absent: true, message: "not a nonempty regular file"},
+		{name: "empty file", runtime: "docker", message: "not a nonempty regular file"},
+		{name: "private key", runtime: "docker", contents: "-----BEGIN PRIVATE KEY-----\nU1lOVEhFVElD\n-----END PRIVATE KEY-----\n", message: notPEM},
+		{name: "certificate with key", runtime: "docker", contents: syntheticTrustCA + "-----BEGIN EC PRIVATE KEY-----\nU1lOVEhFVElD\n-----END EC PRIVATE KEY-----\n", message: notPEM},
+		{name: "unterminated block", runtime: "docker", contents: "-----BEGIN CERTIFICATE-----\nU1lOVEhFVElD\n", message: notPEM},
+		{name: "empty block", runtime: "docker", contents: "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n", message: notPEM},
+		{name: "text outside blocks", runtime: "docker", contents: "subject=synthetic\n" + syntheticTrustCA, message: notPEM},
+		{name: "CRLF line endings", runtime: "docker", contents: strings.ReplaceAll(syntheticTrustCA, "\n", "\r\n"), message: notPEM},
+		{name: "unsupported runtime", runtime: "podman", contents: syntheticTrustCA, message: "requires Docker Buildx"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "called")
+			fake := filepath.Join(dir, tc.runtime)
+			if err := os.WriteFile(fake, []byte("#!/bin/sh\ntouch \"$TEST_MARKER\"\nexit 99\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			trustCA := filepath.Join(dir, "trust-ca.pem")
+			if !tc.absent {
+				if err := os.WriteFile(trustCA, []byte(tc.contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.CommandContext(t.Context(), "bash", "build.sh", "--arch", runtime.GOARCH)
+			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker,
+				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA="+trustCA)
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), tc.message) {
+				t.Fatalf("got %v: %s", err, out)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("runtime reached before trust CA admission: %v", err)
+			}
+		})
+	}
+}
+
+// This source contract proves site trust reaches the final image only through
+// the build secret and the system store; it does not prove a real image build.
+func TestToolchainTrustCAIsSecretOnlyAndVerifying(t *testing.T) {
+	raw, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := string(raw)
+	final := dockerfile[strings.LastIndex(dockerfile, "\nFROM "):]
+	for _, want := range []string{
+		"ARG NVKR_TRUST_CA=none",
+		"--mount=type=secret,id=nvkr_trust_ca,mode=0444",
+		"/usr/local/share/ca-certificates/nvkr-trust-ca-%02d.crt",
+		"-ext basicConstraints | grep -q 'CA:TRUE'",
+		"update-ca-certificates;",
+	} {
+		if !strings.Contains(final, want) {
+			t.Fatalf("final image stage lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"--insecure", "InsecureSkipVerify", "SSL_CERT_FILE", "SSL_CERT_DIR", "GIT_SSL_NO_VERIFY", "sslVerify"} {
+		if strings.Contains(dockerfile, forbidden) {
+			t.Fatalf("Dockerfile weakens or redirects TLS trust with %q", forbidden)
+		}
+	}
+	for _, line := range strings.Split(dockerfile, "\n") {
+		if (strings.HasPrefix(line, "COPY ") || strings.HasPrefix(line, "ADD ")) && strings.Contains(line, ".crt") &&
+			line != "COPY --from=download /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt" {
+			t.Fatalf("certificate copied from the build context: %s", line)
+		}
 	}
 }
 
@@ -681,7 +781,7 @@ esac
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "bash", args...)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
-				"TEST_ARCH="+tc.arch, "TEST_IMAGE_ID="+measured, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=")
+				"TEST_ARCH="+tc.arch, "TEST_IMAGE_ID="+measured, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=")
 			out, err := cmd.CombinedOutput()
 			if (err != nil) != tc.wantError || !strings.Contains(string(out), tc.message) {
 				t.Fatalf("error=%v output=%s; want error=%t message=%s", err, out, tc.wantError, tc.message)

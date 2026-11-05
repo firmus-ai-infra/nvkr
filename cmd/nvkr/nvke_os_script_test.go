@@ -461,7 +461,14 @@ func freezeOSBootstrapRecipe(t *testing.T, script, agentPrefix string) {
 					writeOSBootstrapFixture(t, root, "toolchains/nvkr-packer/toolchain.lock.json", string(raw))
 				}
 				image := "sha256:" + strings.Repeat("e", 64)
-				writeOSBootstrapFixture(t, root, "toolchains/nvkr-packer/build.sh", "#!/bin/sh\nprintf '%s\\n' '"+image+"'\n")
+				writeOSBootstrapFixture(t, root, "toolchains/nvkr-packer/build.sh", `#!/bin/sh
+if [ -n "${TEST_EXPECT_TRUST_CA:-}" ]; then
+  cmp -s "${NVKR_TOOLCHAIN_TRUST_CA:?}" "${TEST_EXPECT_TRUST_CA}" || { echo 'toolchain build did not receive the host trust CAs' >&2; exit 1; }
+elif [ -n "${NVKR_TOOLCHAIN_TRUST_CA:-}" ]; then
+  echo 'unexpected toolchain trust CA' >&2; exit 1
+fi
+printf '%s\n' '`+image+`'
+`)
 				writeOSBootstrapFixture(t, root, "bin/uname", "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo \"$TEST_MACHINE\";; *) exit 99;; esac\n")
 				writeOSBootstrapFixture(t, root, "bin/docker", `#!/bin/sh
 cp "$TEST_RUNNER" .nvkr/bootstrap/test-attempt/nvkr
@@ -491,6 +498,16 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					// A synthetic readable file stands in for the runner's bundle.
 					writeOSBootstrapFixture(t, root, "ca-bundle.crt", "synthetic CA bundle placeholder\n")
 					cmd.Env = append(cmd.Env, "NVKR_HARBOR_CA_BUNDLE="+filepath.Join(root, "ca-bundle.crt"))
+					// The launcher concatenates the host's local *.crt files, in path
+					// order, into the toolchain image's trust input.
+					writeOSBootstrapFixture(t, root, "local-ca/b.crt", syntheticTrustCA("B"))
+					writeOSBootstrapFixture(t, root, "local-ca/a/a.crt", syntheticTrustCA("A"))
+					writeOSBootstrapFixture(t, root, "local-ca/README", "not a certificate\n")
+					writeOSBootstrapFixture(t, root, "expected-trust-ca.pem", syntheticTrustCA("A")+"\n"+syntheticTrustCA("B")+"\n")
+					cmd.Env = append(cmd.Env, "NVKR_HARBOR_TRUST_CA_DIR="+filepath.Join(root, "local-ca"),
+						"TEST_EXPECT_TRUST_CA="+filepath.Join(root, "expected-trust-ca.pem"))
+				} else {
+					cmd.Env = append(cmd.Env, "NVKR_TOOLCHAIN_TRUST_CA=", "TEST_EXPECT_TRUST_CA=")
 				}
 				if output, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("freezing selected recipe: %v\n%s", err, output)
@@ -571,6 +588,56 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 			})
 		}
 	}
+}
+
+// The Harbor launcher refuses to build a toolchain image that cannot trust
+// Harbor: with no locally installed CA it stops before the toolchain build.
+func TestOSBootstrapHarborRequiresLocalTrustCA(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("OS wrapper requires jq")
+	}
+	repository := filepath.Dir(filepath.Dir(demoScript(t, "nvke-os-local.sh")))
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{"inputs/definitions/diagnostics", "inputs/environments", "inputs/catalogs/node-images"} {
+		if err := os.CopyFS(filepath.Join(root, directory), os.DirFS(filepath.Join(repository, directory))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range []string{"scripts/nvke-os-local-harbor.sh", "toolchains/nvkr-packer/toolchain.lock.json"} {
+		raw, err := os.ReadFile(filepath.Join(repository, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeOSBootstrapFixture(t, root, file, string(raw))
+	}
+	marker := filepath.Join(root, "toolchain-built")
+	writeOSBootstrapFixture(t, root, "toolchains/nvkr-packer/build.sh", "#!/bin/sh\ntouch \"$TEST_MARKER\"\nexit 99\n")
+	writeOSBootstrapFixture(t, root, "bin/uname", "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo aarch64;; *) exit 99;; esac\n")
+	writeOSBootstrapFixture(t, root, "bin/docker", "#!/bin/sh\ntouch \"$TEST_MARKER\"\nexit 99\n")
+	writeOSBootstrapFixture(t, root, "ca-bundle.crt", "synthetic CA bundle placeholder\n")
+	writeOSBootstrapFixture(t, root, "local-ca/README", "not a certificate\n")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(root, "scripts/nvke-os-local-harbor.sh"), "test-attempt")
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"),
+		"CONTAINER_RUNTIME=docker", "NVKE_OS_ARCH=arm64", "NVKE_OS_UBUNTU_VERSION=24.04", "NVKE_LOCAL_CLONE=",
+		"NVKR_HARBOR_CA_BUNDLE="+filepath.Join(root, "ca-bundle.crt"),
+		"NVKR_HARBOR_TRUST_CA_DIR="+filepath.Join(root, "local-ca"), "TEST_MARKER="+marker)
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "no locally installed CA certificate") {
+		t.Fatalf("launcher admitted a toolchain without Harbor trust: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("toolchain build or runtime reached before trust admission: %v", err)
+	}
+}
+
+// syntheticTrustCA is a PEM-shaped placeholder; it is not a real certificate.
+func syntheticTrustCA(label string) string {
+	return "-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDLVRFU1QtQ0EtCg" + label + "==\n-----END CERTIFICATE-----\n"
 }
 
 func writeOSBootstrapFixture(t *testing.T, root, path, contents string) {

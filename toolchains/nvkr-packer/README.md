@@ -78,6 +78,20 @@ CONTAINER_RUNTIME=docker NVKR_BUILD_ARCHIVES=/absolute/path/to/archives \
   toolchains/nvkr-packer/build.sh --arch amd64
 ```
 
+`NVKR_TOOLCHAIN_TRUST_CA` is different: it names a PEM file of site CA
+certificates that the finished image must trust at run time, such as the issuer
+of a private registry mirror that crane pulls through while vendoring. The file
+may hold several certificates and must contain only PEM `CERTIFICATE` blocks;
+anything else, including a private key, is rejected before Docker runs. It
+reaches the build only as the `nvkr_trust_ca` secret, never through the build
+context. The final stage refuses a certificate without `CA:TRUE`, installs the
+rest under `/usr/local/share/ca-certificates/` with `update-ca-certificates`,
+and checks each one is in `/etc/ssl/certs/ca-certificates.crt`, the store Go,
+curl and Git read. The native validation then confirms the returned image ID
+trusts every supplied certificate. TLS verification is never disabled. The
+certificates become part of the image bytes and so of its ID. Unset, the image
+carries only Ubuntu's public CAs.
+
 Docker builds use Buildx with `SOURCE_DATE_EPOCH=0` and the Docker exporter's
 `rewrite-timestamp=true` option for deterministic image creation and layer-file
 timestamps. Docker explicitly streams the image archive to `docker image load`,

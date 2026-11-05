@@ -249,6 +249,33 @@ RUN --mount=type=secret,id=nvkr_ca_bundle,mode=0444 set -eux; \
 		xorriso \
 	&& rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/99bootstrap-ca /etc/apt/sources.list.d/ubuntu.sources
 
+# Site CAs (for example a private registry mirror's issuer) arrive only as the
+# nvkr_trust_ca secret and are installed into the system store, which Go
+# (crane), curl and Git read at run time. TLS verification stays enabled.
+ARG NVKR_TRUST_CA=none
+RUN --mount=type=secret,id=nvkr_trust_ca,mode=0444 set -eu; \
+    case "${NVKR_TRUST_CA}" in \
+      none) if [ -e /run/secrets/nvkr_trust_ca ]; then echo 'trust CA secret requires NVKR_TRUST_CA=required' >&2; exit 1; fi; exit 0 ;; \
+      required) ;; \
+      *) echo "unsupported NVKR_TRUST_CA: ${NVKR_TRUST_CA}" >&2; exit 1 ;; \
+    esac; \
+    test -s /run/secrets/nvkr_trust_ca || { echo 'NVKR_TRUST_CA=required needs a nonempty nvkr_trust_ca secret' >&2; exit 1; }; \
+    command -v openssl >/dev/null; \
+    awk '/^-----BEGIN CERTIFICATE-----$/ { n++; f = sprintf("/usr/local/share/ca-certificates/nvkr-trust-ca-%02d.crt", n) } \
+      f { print > f } /^-----END CERTIFICATE-----$/ { close(f); f = "" }' /run/secrets/nvkr_trust_ca; \
+    set -- /usr/local/share/ca-certificates/nvkr-trust-ca-*.crt; \
+    test -f "$1"; \
+    for cert in "$@"; do \
+      openssl x509 -in "${cert}" -noout -ext basicConstraints | grep -q 'CA:TRUE' \
+        || { echo "${cert} is not a CA certificate" >&2; exit 1; }; \
+    done; \
+    update-ca-certificates; \
+    bundle="$(tr -d '\r\n' </etc/ssl/certs/ca-certificates.crt)"; \
+    for cert in "$@"; do \
+      body="$(sed '/^-----/d' "${cert}" | tr -d '\r\n')"; \
+      case "${bundle}" in *"${body}"*) ;; *) echo "${cert} is missing from the system CA bundle" >&2; exit 1 ;; esac; \
+    done
+
 COPY --from=fetch /out/packer/packer.bin /usr/local/bin/packer
 COPY --from=fetch /out/plugins/ /nvkr/toolchain/packer/plugins/
 COPY --from=fetch /out/go/ /usr/local/go/

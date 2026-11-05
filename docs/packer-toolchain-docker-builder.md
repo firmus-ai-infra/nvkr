@@ -46,11 +46,14 @@ To refresh the pin:
 
 - sets `NVKR_PACKER_BUILDKIT_IMAGE` to `harbor.cbr01.in.firmus.co/dockerhub/` followed by the locked digest;
 - requires the system CA bundle `/etc/ssl/certs/ca-certificates.crt` to be a readable file, and stops before the build if it is not;
-- writes a `buildkitd.toml` into the attempt's private temporary directory. It trusts that bundle for both `harbor.cbr01.in.firmus.co` and `harbor.cbr01.co`, and passes the file as `NVKR_BUILDKIT_CONFIG`.
+- writes a `buildkitd.toml` into the attempt's private temporary directory. It trusts that bundle for both `harbor.cbr01.in.firmus.co` and `harbor.cbr01.co`, and passes the file as `NVKR_BUILDKIT_CONFIG`;
+- concatenates every `*.crt` under `/usr/local/share/ca-certificates`, in path order, into the attempt's private temporary directory and passes that file as `NVKR_TOOLCHAIN_TRUST_CA`. It stops before the build if the directory holds no `*.crt`.
 
 Harbor's certificate comes from a private CA. The host's checks and the Docker daemon trust it because the CA is installed on the host, but the builder's container does not inherit host trust. Without the bundle, BuildKit uses only the public CAs in its image and the base image pull fails with `x509: certificate signed by unknown authority`. Buildx reads the bundle where `build.sh` runs and copies it into the builder.
 
-`NVKR_HARBOR_CA_BUNDLE` replaces the bundle path. The contract test uses it with a synthetic file. Do not set it on the runner.
+The finished toolchain image does not inherit host trust either. NVKE's vendoring runs crane inside it and pulls Calico images through `harbor.cbr01.in.firmus.co/dockerhub`. Without the Firmus CAs in the image's own store, every pull fails with the same `x509` error and NVKE falls back to anonymous Docker Hub, which then hits the pull rate limit. `NVKR_TOOLCHAIN_TRUST_CA` installs the host's locally added CAs, which on the runner are the Firmus root and issuing CAs, into the image's system store. Any other CA an operator has added to that directory is trusted in the image as well.
+
+`NVKR_HARBOR_CA_BUNDLE` replaces the bundle path and `NVKR_HARBOR_TRUST_CA_DIR` replaces the CA directory. The contract tests use them with synthetic files. Do not set them on the runner.
 
 ### Before the next CircleCI run
 
@@ -101,4 +104,5 @@ Buildx runs the `docker-container` driver's BuildKit privileged, and it has no o
 ## Verification status
 
 - `toolchains/nvkr-packer/build_test.go` covers the builder's creation flags, the pinned image, the config binding, ordering of create, build, and removal, creation failure, removal failure, and the rejection of invalid overrides. These tests use fake `docker` programs.
-- Not yet exercised: a real export on the CircleCI runner, a pull of the BuildKit digest through Harbor, and a Harbor-backed build with the system CA bundle. Record those in the reconciliation ledger when they run.
+- `toolchains/nvkr-packer/build_test.go` also covers trust-CA admission (only PEM `CERTIFICATE` blocks, checked before any runtime call), its secret and build-arg binding, and the native-validation mount. `cmd/nvkr/nvke_os_script_test.go` covers the launcher's CA collection and its refusal to build without one. The final-stage install and the validation check were also run outside a Dockerfile build, against throwaway CAs, in a Debian Go image with no network. A server certificate signed by those CAs then verified through Go's system pool.
+- Not yet exercised: a real export on the CircleCI runner, a pull of the BuildKit digest through Harbor, a Harbor-backed build with the system CA bundle, and a toolchain image built with the runner's Firmus CAs vendoring Calico through Harbor. Record those in the reconciliation ledger when they run.

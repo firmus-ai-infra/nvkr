@@ -17,7 +17,9 @@ with Docker and KVM. Docker Hub image references the host daemon pulls are
 rewritten to harbor.cbr01.in.firmus.co/dockerhub. The OVN image's Ubuntu base
 (UBUNTU_BASE_IMAGE, or the pinned BASE_IMAGE for Ubuntu 24.04)
 stays on Docker Hub because nested BuildKit does not use the host certificate
-store. This is a development bootstrap route.
+store. The toolchain image is built to trust the host CAs in
+/usr/local/share/ca-certificates, which must include Harbor's issuing CA.
+This is a development bootstrap route.
 
 CONTAINER_RUNTIME defaults to docker; this launcher requires Docker.
 Set NVKE_OS_ARCH=amd64 or NVKE_OS_ARCH=arm64. ARM64 is the compatibility default.
@@ -259,9 +261,30 @@ cat >"${buildkit_config}" <<EOF
 [registry."harbor.cbr01.co"]
   ca = ["${harbor_ca_bundle}"]
 EOF
+# Vendoring runs crane, curl and Go inside the toolchain image, which does not
+# inherit host trust. Install the host's locally added CAs, which include
+# Harbor's issuer, into that image's system store.
+# NVKR_HARBOR_TRUST_CA_DIR exists for contract tests; the runner uses the default.
+harbor_trust_ca_dir="${NVKR_HARBOR_TRUST_CA_DIR:-/usr/local/share/ca-certificates}"
+toolchain_trust_ca="${TMPDIR}/toolchain-trust-ca.pem"
+: >"${toolchain_trust_ca}"
+trust_ca_count=0
+if [[ -d "${harbor_trust_ca_dir}" ]]; then
+  while IFS= read -r trust_ca_file; do
+    [[ -n "${trust_ca_file}" ]] || continue
+    cat -- "${trust_ca_file}" >>"${toolchain_trust_ca}"
+    printf '\n' >>"${toolchain_trust_ca}"
+    trust_ca_count=$((trust_ca_count + 1))
+  done < <(find -L "${harbor_trust_ca_dir}" -type f -name '*.crt' -print | LC_ALL=C sort)
+fi
+if [[ "${trust_ca_count}" -eq 0 ]]; then
+  echo "no locally installed CA certificate (*.crt) in ${harbor_trust_ca_dir}; the toolchain image must trust Harbor's issuing CA" >&2
+  exit 1
+fi
 
 toolchain_image="$(NVKR_PACKER_BUILDKIT_IMAGE="${harbor_registry}/${packer_buildkit}" \
   NVKR_BUILDKIT_CONFIG="${buildkit_config}" \
+  NVKR_TOOLCHAIN_TRUST_CA="${toolchain_trust_ca}" \
   CONTAINER_RUNTIME="${runtime}" toolchains/nvkr-packer/build.sh \
   --arch "${arch}" --print-validated-image-id)"
 if [[ ! "${toolchain_image}" =~ ^sha256:[0-9a-f]{64}$ ]]; then

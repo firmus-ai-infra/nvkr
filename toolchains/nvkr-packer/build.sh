@@ -167,7 +167,7 @@ fi
 command -v "${runtime}" >/dev/null 2>&1 || { echo "Docker is required" >&2; exit 1; }
 
 build_inputs=()
-if [[ -n "${NVKR_BUILD_ARCHIVES:-}" || -n "${NVKR_BUILD_CA_BUNDLE:-}" ]]; then
+if [[ -n "${NVKR_BUILD_ARCHIVES:-}" || -n "${NVKR_BUILD_CA_BUNDLE:-}" || -n "${NVKR_TOOLCHAIN_TRUST_CA:-}" ]]; then
   [[ "${runtime##*/}" == docker ]] || { echo 'archive/CA inputs require Docker Buildx' >&2; exit 1; }
 fi
 if [[ -n "${NVKR_BUILD_ARCHIVES:-}" ]]; then
@@ -177,6 +177,27 @@ fi
 if [[ -n "${NVKR_BUILD_CA_BUNDLE:-}" ]]; then
   [[ -f "${NVKR_BUILD_CA_BUNDLE}" ]] || { echo 'build CA bundle is not a regular file' >&2; exit 1; }
   build_inputs+=(--secret "id=nvkr_ca_bundle,src=${NVKR_BUILD_CA_BUNDLE}")
+fi
+# Site CAs the final image's system store must trust at run time, for example a
+# private registry mirror's issuing CA. Only PEM CERTIFICATE blocks are admitted,
+# so a key or another PEM type cannot be installed as trust.
+trust_ca=""
+if [[ -n "${NVKR_TOOLCHAIN_TRUST_CA:-}" ]]; then
+  [[ -f "${NVKR_TOOLCHAIN_TRUST_CA}" && -s "${NVKR_TOOLCHAIN_TRUST_CA}" ]] || {
+    echo 'toolchain trust CA is not a nonempty regular file' >&2; exit 1; }
+  if ! awk '
+    /^[[:space:]]*$/ { next }
+    $0 == "-----BEGIN CERTIFICATE-----" { if (open) { bad = 1; exit } open = 1; body = 0; certs++; next }
+    $0 == "-----END CERTIFICATE-----" { if (!open || !body) { bad = 1; exit } open = 0; next }
+    open && /^[A-Za-z0-9+\/=]+$/ { body = 1; next }
+    { bad = 1; exit }
+    END { exit (bad || open || certs == 0) }
+  ' "${NVKR_TOOLCHAIN_TRUST_CA}"; then
+    echo 'toolchain trust CA must contain only PEM CERTIFICATE blocks' >&2
+    exit 1
+  fi
+  trust_ca="$(cd "$(dirname "${NVKR_TOOLCHAIN_TRUST_CA}")" && pwd -P)/$(basename "${NVKR_TOOLCHAIN_TRUST_CA}")"
+  build_inputs+=(--secret "id=nvkr_trust_ca,src=${trust_ca}" --build-arg NVKR_TRUST_CA=required)
 fi
 buildkit_config=""
 if [[ -n "${NVKR_BUILDKIT_CONFIG:-}" ]]; then
@@ -425,6 +446,10 @@ if [[ "${arch}" != "${native_arch}" ]]; then
   exit 0
 fi
 
+trust_args=()
+if [[ -n "${trust_ca}" ]]; then
+  trust_args=(--mount "type=bind,src=${trust_ca},dst=/nvkr/trust-ca.pem,readonly")
+fi
 "${runtime}" run --rm \
   --platform "linux/${arch}" \
   --network none \
@@ -433,6 +458,7 @@ fi
   --security-opt no-new-privileges \
   --user "${uid}:${gid}" \
   "${identity_args[@]}" \
+  ${trust_args[@]+"${trust_args[@]}"} \
   --hostname nvkr-packer \
   --tmpfs /nvkr/work:rw,nosuid,nodev,mode=1777 \
   --env CHECKPOINT_DISABLE=1 \
@@ -497,6 +523,12 @@ fi
   test -f /usr/share/OVMF/OVMF_VARS_4M.fd
   test -f /usr/share/AAVMF/AAVMF_CODE.fd
   test -f /usr/share/AAVMF/AAVMF_VARS.fd
+  if [ -e /nvkr/trust-ca.pem ]; then
+    bundle="$(tr -d "\r\n" </etc/ssl/certs/ca-certificates.crt)"
+    for body in $(awk "/^-----BEGIN CERTIFICATE-----\$/ { b = \"\"; next } /^-----END CERTIFICATE-----\$/ { print b; next } { b = b \$0 }" /nvkr/trust-ca.pem); do
+      case "${bundle}" in *"${body}"*) ;; *) echo "toolchain system CA bundle lacks a supplied trust CA" >&2; exit 1 ;; esac
+    done
+  fi
   key="${TMPDIR}/id_ed25519"
   ssh-keygen -q -t ed25519 -N "" -f "${key}"
   test "$(ssh-keygen -y -f "${key}" | cut -d" " -f1-2)" = "$(cut -d" " -f1-2 "${key}.pub")"
