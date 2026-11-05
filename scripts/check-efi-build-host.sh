@@ -11,7 +11,7 @@
 # below passed, not that the EFI builds or boots.
 #
 # The requirements mirror os-image/efi/scripts/setup-efi-build-host.sh and the
-# `check-deps` target in os-image/efi/Makefile (NVKE commit 9114d841). Items
+# `check-deps` target in os-image/efi/Makefile (NVKE commit 8841a4d5). Items
 # marked "unverified" are inferred and never fail the run.
 #
 # Usage: scripts/check-efi-build-host.sh
