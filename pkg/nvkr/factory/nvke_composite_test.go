@@ -20,11 +20,17 @@ import (
 const nvkeCompositePath = "inputs/definitions/nvke/composite.yaml"
 
 // nvkeCompositeFamilies are the worked example's members. The Ubuntu 24.04 disk
-// family shares component names with the Ubuntu 26.04 one, so ADR-26 refuses it
-// as a separate member; a composite holding both series needs them in one member.
+// family shares component names with the Ubuntu 26.04 one at different pins, so
+// ADR-26 refuses it as a separate member unless the composite declares those
+// components as variants of the two disk families.
 var nvkeCompositeFamilies = []string{"core", "disks", "services", "telemetry"}
 
 const nvkeCompositeExcludedFamily = "disks-ubuntu24"
+
+// nvkeUbuntuSeriesVariants are the components the Ubuntu 24.04 overlay replaces,
+// sorted as a composite declares them.
+var nvkeUbuntuSeriesVariants = []string{"nvke-agent", "nvke-doca-ovs", "nvke-node-fde-amd64", "nvke-node-fde-arm64",
+	"nvke-node-image", "nvke-node-image-amd64", "ubuntu-installer-iso", "ubuntu-installer-iso-amd64"}
 
 func nvkeCompositeMember(t *testing.T, family string) authored.CompositeMember {
 	t.Helper()
@@ -75,7 +81,7 @@ func TestNVKECompositeAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	effective, want := composition.Effective(), len(combined.Outputs)+len(nvkeFamilyOnlyOutputs)-len(nvkeCompositeExcludedOutputs(t))
+	effective, want := composition.Effective(), len(combined.Outputs)-len(nvkeCombinedOnlyOutputs)+len(nvkeFamilyOnlyOutputs)-len(nvkeCompositeExcludedOutputs(t))
 	if len(composition.Members()) != len(nvkeCompositeFamilies) || len(effective.Outputs) != want || len(composition.Attribution()) != want {
 		t.Fatalf("composite admits %d members and %d outputs, want %d and %d", len(composition.Members()), len(effective.Outputs), len(nvkeCompositeFamilies), want)
 	}
@@ -135,8 +141,10 @@ func TestNVKECompositeIdentityInvariance(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Both Ubuntu disk series as separate members select divergent producers
-	// for the same components, which ADR-26 refuses at compilation.
-	bothSeries, err := admitNVKEComposite(t, nvkeComposite(t, nvkeCompositeMember(t, nvkeCompositeExcludedFamily)))
+	// for the same components, which ADR-26 refuses at compilation unless the
+	// composite declares each of them as a variant of the two disk families.
+	series := nvkeComposite(t, nvkeCompositeMember(t, nvkeCompositeExcludedFamily))
+	bothSeries, err := admitNVKEComposite(t, series)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +153,18 @@ func TestNVKECompositeIdentityInvariance(t *testing.T) {
 	if !strings.Contains(err.Error(), "select divergent producers") {
 		t.Fatalf("refused for an unexpected reason: %v", err)
 	}
+	for _, component := range nvkeUbuntuSeriesVariants {
+		series.Variants = append(series.Variants, authored.DeclaredVariant{Component: component, Members: []string{"nvke-disks", "nvke-" + nvkeCompositeExcludedFamily}})
+	}
+	declared, err := admitNVKEComposite(t, series)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compileComposition(t.Context(), declared, "inputs/environments/github-release.yaml", environment, combined.GeneratorVersion, loadStack); err != nil {
+		t.Fatalf("both Ubuntu series with declared variants: %v", err)
+	}
 	excluded := nvkeCompositeExcludedOutputs(t)
-	if want := len(combined.Definition.Outputs) + len(nvkeFamilyOnlyOutputs) - len(excluded); len(plan.LifecycleOutputs) != want || len(plan.Composition.Members) != len(nvkeCompositeFamilies) {
+	if want := len(combined.Definition.Outputs) - len(nvkeCombinedOnlyOutputs) + len(nvkeFamilyOnlyOutputs) - len(excluded); len(plan.LifecycleOutputs) != want || len(plan.Composition.Members) != len(nvkeCompositeFamilies) {
 		t.Fatalf("composite Plan has %d outputs, want %d", len(plan.LifecycleOutputs), want)
 	}
 	// The combined Definition lacks family-only outputs, so the plain baseline is the effective Definition.
@@ -187,7 +205,8 @@ func TestNVKECompositeIdentityInvariance(t *testing.T) {
 	}
 	for _, baseline := range baselines {
 		for _, build := range baseline.Builds {
-			if output, _, _ := strings.Cut(build.Name, "/"); excluded[output] {
+			output, _, _ := strings.Cut(build.Name, "/")
+			if _, combinedOnly := nvkeCombinedOnlyOutputs[output]; excluded[output] || combinedOnly {
 				continue
 			}
 			if !bytes.Equal(mustCanonical(t, build), builds[build.Name]) {
@@ -195,7 +214,7 @@ func TestNVKECompositeIdentityInvariance(t *testing.T) {
 			}
 		}
 		for _, output := range baseline.LifecycleOutputs {
-			if excluded[output.Name] {
+			if _, combinedOnly := nvkeCombinedOnlyOutputs[output.Name]; excluded[output.Name] || combinedOnly {
 				continue
 			}
 			if !bytes.Equal(mustCanonical(t, output), outputs[output.Name]) {

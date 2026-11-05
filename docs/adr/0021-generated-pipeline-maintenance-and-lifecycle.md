@@ -49,15 +49,12 @@ The named producer's workflow display name is `nvkr-project-<name>`, disjoint fr
 the default `nvkr-run-<Definition name>` and development `nvkr-dev-<Definition name>`.
 This keeps same-Definition bundles separate under GitHub's workflow-based concurrency
 and prevents a named producer from matching the default qualifier's display-name trigger.
-That separation is not a destination-wide lock. ADR-20's S3 extension restricts each enrolled physical
-namespace to one repository, workflow path, display name/bundle, exact ref and evaluated non-canceling
-group. Another repository, workflow, bundle, ref or transport alias cannot bypass that enrolled owner.
-The extension's admission remains implementation work.
-Cross-Run namespace serialization and atomic completion belong exclusively to `lifecycle`'s private
-delivery-namespace store (ADR-20); the workflow concurrency group is not that store.
-The enrolled workflow path is the bundle's entry workflow. Its exact manifest-owned partition workers remain
-within that entry's closure; they grant no second namespace owner or competing concurrency group. ADR-18's
-rule keeping OIDC jobs in the entry workflow remains in force.
+That separation is not a destination-wide lock. ADR-20's object-store publication uses immutable
+content keys, conditional creation and fully verified pinned reads so independent Runs can share a prefix.
+There is no namespace enrollment, mutable cross-Run coordinator or delivery-namespace store. The final
+transport inventory records completion of one copy; existing Run finalization still requires every selected
+publication operation. The bundle's exact manifest-owned partition workers remain within its entry closure.
+ADR-18's rule keeping OIDC jobs in the entry workflow remains in force.
 Workflow file paths and explicit signing identities retain the namespace contract above.
 Every generated execution, recovery and utility-container command selects that exact
 Plan path; validation rejects a bundle whose paths differ from the admitted Environment.
@@ -433,6 +430,16 @@ and worktrees retain Git's ordinary review and merge-conflict behavior.
 maintenance regenerates a candidate by invoking the existing owners (`run generate` and the qualification
 generator); it renders none of their files itself. Conflating two "CI" artifacts under one verb is
 disallowed; that ambiguity is what makes forgotten-regen drift possible.
+
+Native Packer/inspector maintenance is a separate authored hosted workflow. It reuses native preparation,
+retains exact source/archive/image/executable measurements, and requires a reviewed main-branch per-image
+candidate exception with approver, scope, expiry and license/security review references before publication.
+Both architectures and all subjects are admitted before the first write. Publication is limited to the
+existing internal candidate packages inside the protected publication environment. Independent-reader
+registry read-back and native pulls precede a review-only catalog/overlay/Environment pin change; the existing
+owners regenerate all dependent bundles. Exceptions grant no general approval or qualification, and ordinary
+producer Runs never rebuild toolchains implicitly. The operational owner, cadence, retention and rollback
+procedure live in the maintenance guide; external exercise is recorded in reconciliation.
 
 ## Consequences
 
