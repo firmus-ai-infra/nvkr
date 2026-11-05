@@ -3,13 +3,26 @@
 
 # Customer-owned CircleCI config. NVKR does not generate this file.
 # This pipeline builds one artifact: the Ubuntu 24.04.5 ARM64 node QCOW2.
-# build_node_image starts that job. publish_node_image uploads the disk and
-# does not start a job by itself. The job refuses uid 0. Its last step restores
-# owner write on its directories, then deletes the working directory on success
-# and on failure. NVKR registry publication stays out.
+# build_node_image starts that job. After the disk is recorded, the job boots
+# it with NVKE boot-smoke.sh. That boot is diagnostic. A failed boot stops the
+# job before publication. publish_node_image uploads the disk and does not
+# start a job by itself. The job refuses uid 0. Its last step restores owner
+# write on its directories, then deletes the working directory, except after a
+# failed boot. The runner clears that directory before its next task.
+# NVKR registry publication stays out.
+# check_efi_build_host starts a read-only preflight job. It builds nothing,
+# lists what the runner lacks to build the arm64 qcow-imager.efi, prints the
+# status, and passes even when the host is not ready.
 version: 2.1
 
 parameters:
+  # Check whether this runner can build the arm64 qcow-imager.efi. Runs every
+  # check, lists all gaps, and prints the status. A missing item does not fail
+  # the job or stop node-os-image. Off by default so it does not run on every
+  # pipeline.
+  check_efi_build_host:
+    type: boolean
+    default: false
   # Build and record the Ubuntu 24.04.5 ARM64 node image.
   build_node_image:
     type: boolean
@@ -25,6 +38,39 @@ executors:
     resource_class: firmus/arm64-native
 
 jobs:
+  check-efi-build-host:
+    executor: node-image
+    steps:
+      - checkout
+      - run:
+          name: Check the host can build the arm64 EFI imager
+          command: |
+            set -uo pipefail
+            # Keep the exit code for the status step after the report is stored.
+            rc=0
+            EFI_ARCH=arm64 EFI_CHECK_REPORT="${PWD}/efi-host-check.txt" \
+              scripts/check-efi-build-host.sh || rc=$?
+            printf '%s\n' "${rc}" > efi-host-check.rc
+      - store_artifacts:
+          path: efi-host-check.txt
+          destination: efi-host-check
+      - run:
+          name: Report the EFI build host status
+          command: |
+            set -euo pipefail
+            rc="$(cat efi-host-check.rc 2>/dev/null || echo missing)"
+            case "${rc}" in
+              0)
+                echo "EFI build host status: READY"
+                ;;
+              missing)
+                echo "EFI build host status: UNKNOWN (the check recorded no exit code); continuing"
+                ;;
+              *)
+                echo "EFI build host status: NOT READY (check exit ${rc}); see the numbered list above or the efi-host-check artifact; continuing"
+                ;;
+            esac
+
   build-node-os-image:
     executor: node-image
     environment:
@@ -117,6 +163,20 @@ jobs:
               "${attempt}" "${CIRCLE_BUILD_NUM}" "${size}" "${digest}" \
               > "${outdir}/build-info.txt"
             test -f ".nvkr/runs/${attempt}/lifecycle.json"
+      - run:
+          name: Boot-smoke the Ubuntu 24 node image
+          no_output_timeout: 45m
+          command: |
+            set -euo pipefail
+            if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+              echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
+              exit 1
+            fi
+            # A failed fetch or boot leaves the job directory in place. The
+            # build number keeps a stale marker from matching this job.
+            trap 'mkdir -p .nvkr; : > ".nvkr/preserve-workspace-${CIRCLE_BUILD_NUM}"; trap - ERR; exit 1' ERR
+            scripts/fetch-nvke-efi-src.sh
+            scripts/boot-smoke-node-image.sh
       - when:
           condition: << pipeline.parameters.publish_node_image >>
           steps:
@@ -139,6 +199,7 @@ jobs:
             cp "${outdir}/nvke-node-image-ubuntu24-arm64.qcow2.sha256" "${dest}/"
             cp "${outdir}/build-info.txt" "${dest}/"
             cp ".nvkr/runs/${attempt}/lifecycle.json" "${dest}/"
+            cp .nvkr/evidence/boot-smoke-arm64.log "${dest}/"
       - store_artifacts:
           path: nvkr-node-image-meta
           destination: node-image
@@ -157,6 +218,10 @@ jobs:
             if [ "${PWD}" = "/" ]; then
               echo "refusing to clean the host root" >&2
               exit 1
+            fi
+            if [ -n "${CIRCLE_BUILD_NUM:-}" ] && [ -f ".nvkr/preserve-workspace-${CIRCLE_BUILD_NUM}" ]; then
+              echo "boot smoke failed; leaving ${PWD} in place until the runner's next task"
+              exit 0
             fi
             uid="$(id -u)"
             gid="$(id -g)"
@@ -182,6 +247,10 @@ jobs:
             fi
 
 workflows:
+  efi-build-host-preflight:
+    when: << pipeline.parameters.check_efi_build_host >>
+    jobs:
+      - check-efi-build-host
   node-os-image:
     when: << pipeline.parameters.build_node_image >>
     jobs:

@@ -70,9 +70,11 @@ find /var/lib/circleci-runner/workdir/.nvkr -xdev -type d \
   \( ! -user RUNNER_ACCOUNT -o ! -group RUNNER_GROUP \) -print
 ```
 
-The command must produce no output after a successful job's reclamation step.
-A failed node-image boot smoke does not reclaim. It leaves
-`.nvkr/preserve-root` owned by root so the runner cannot delete that working
-directory. Remove that directory as root after copying the disk you need.
+The command must produce no output after a successful job's cleanup step.
+A failed node-image boot smoke skips the cleanup step's deletion and publishes
+nothing. The built disk, the Run record, and `.nvkr/evidence/boot-smoke-arm64.log`
+stay in the working directory until the runner clears it before its next task.
+Copy what you need before another task starts on that runner. The skip leaves no
+root-owned path, so it does not stop the runner from accepting tasks.
 This is local filesystem evidence only; it does not prove CircleCI scheduling
 or hosted runner lifecycle behavior.

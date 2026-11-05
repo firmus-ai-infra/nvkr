@@ -121,6 +121,19 @@ separate compatible agent compiler. The architecture and native KVM requirements
 `scripts/push-node-image-s3.sh` uploads the Ubuntu 24.04.5 AMD64 disk from that
 wrapper, and the byte copy does not grant release authority.
 
+`scripts/check-efi-build-host.sh` is a read-only preflight for building NVKE's `qcow-imager.efi`. It runs
+every check and prints one numbered list of what an administrator and the runner user must still do, then
+exits 1 if the list is not empty. It installs nothing and does not build the EFI. The CircleCI
+`check_efi_build_host` parameter runs it as its own job, which prints `READY` or `NOT READY` and passes either way
+without stopping the node-image build. It reflects NVKE's setup script, so recheck it after
+an NVKE pin bump.
+
+`scripts/build-efi-docker.sh` builds the arm64 `qcow-imager.efi` inside a privileged, native arm64 Ubuntu
+container by running NVKE's own `make -C os-image/efi build-efi-arm64`. It refuses a non-aarch64 Docker daemon,
+less than `EFI_MIN_MEM_GIB` (default 8) of Docker memory, a failed namespace smoke test, and an existing output
+unless `EFI_FORCE=1`. It writes the EFI, its SHA-256 and `file` output to `.nvkr/efi-out/` (override with
+`EFI_OUT_DIR`). The result is an unattested local build that is not shown to boot a node.
+
 Use a different immutable attempt name for each run. The historical Podman
 [full build and boot smoke](https://github.com/dsx-ai-factory/nvkr/blob/a187d6b702cbc1a70452760c606c2c4de1ed6618/docs/evidence/2026-09-23-nke-arm64-local-os-build.md)
 does not validate a current maintained route.
