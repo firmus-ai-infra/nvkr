@@ -188,7 +188,7 @@ func (l Local) vendor(n ir.Node, dir string, opts RunOptions) error {
 	return ensureSourceClosure(n, dir, opts, func() error {
 		abs, _ := filepath.Abs(dir)
 		cname := containerName(ir.Node{ID: "vendor-" + n.Dest})
-		args := append([]string{"run", "--rm", "--name", cname, "--network=" + ir.NetworkDefault, "-v", abs + ":/src", "-w", "/src", n.VendorImage}, n.VendorCmd...)
+		args := localVendorArgs(cname, abs, n.VendorImage, n.VendorCmd)
 		fmt.Fprintf(opts.Stdout, "\n=== vendor %s (network, %s) ===\n", n.Dest, n.VendorImage)
 		opts.progress.printf("[container] vendor %s — launching %s with network access\n", n.Dest, n.VendorImage)
 		if err := registerContainer(opts, cname); err != nil {
@@ -200,6 +200,21 @@ func (l Local) vendor(n ir.Node, dir string, opts RunOptions) error {
 		opts.reap.forget(cname)
 		return nil
 	})
+}
+
+// localVendorOwnershipScript runs the vendor command, then returns /src to the
+// invoking account whether or not the command succeeded. Vendor images run as
+// their default user, normally root, on a writable bind mount; without this the
+// runner cannot delete the checkout. A failed ownership change fails the fetch.
+const localVendorOwnershipScript = `owner=$1; shift; "$@"; status=$?; chown -R -h "$owner" /src || exit 1; exit "$status"`
+
+func localVendorArgs(name, source, image string, command []string) []string {
+	args := []string{
+		"run", "--rm", "--name", name, "--network=" + ir.NetworkDefault, "--userns=host",
+		"-v", source + ":/src", "-w", "/src", image,
+		"sh", "-c", localVendorOwnershipScript, "nvkr-vendor", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+	}
+	return append(args, command...)
 }
 
 func (l Local) verifyTree(dir string, n ir.Node, opts RunOptions) error {
