@@ -277,7 +277,7 @@ PROJECTION_PILOT ?=
 PROJECTION_PILOT_FLAG = $(if $(PROJECTION_PILOT),--projection-pilot=$(PROJECTION_PILOT))
 
 .PHONY: workflows-check
-workflows-check: workflow-generator pipeline-dev-check nvke-split-check catalog-refresh-check ## Check committed producer, qualification, development and family bundles and the catalog refresh workflow for drift.
+workflows-check: workflow-generator producer-overlays-check pipeline-dev-check nvke-split-check nvke-gpu-site-check catalog-refresh-check ## Check committed producer, qualification, development, family and GPU site composite bundles and the catalog refresh workflow for drift.
 	@# Repeat the committed Plan's authored selection, including focused feature-branch
 	@# Definitions. The generator still authenticates the complete bundle and inputs.
 	@definition="$$(jq -er '.definitionPath | select(type == "string" and length > 0)' .github/nvkr-run/plan.json)" && \
@@ -293,6 +293,13 @@ workflows-check: workflow-generator pipeline-dev-check nvke-split-check catalog-
 		--definition inputs/definitions/demo/arm64-upstream-kvm.json \
 		--environment inputs/environments/github-nightly-upstream.json \
 		--root . --runtime --check
+
+.PHONY: producer-overlays-check producer-overlays-generate
+producer-overlays-check: workflow-generator ## Check configured producer copies and predecessor bindings.
+	bin/nvkr-exec catalog regenerate-overlays --config inputs/policies/ovn-producer-overlays.json --check
+
+producer-overlays-generate: workflow-generator ## Regenerate configured producer copies and predecessor bindings.
+	bin/nvkr-exec catalog regenerate-overlays --config inputs/policies/ovn-producer-overlays.json
 
 # The private NVKE source the installed catalog refresh workflow was rendered with.
 CATALOG_REFRESH_SOURCE ?= dsx-ai-factory/nvke:NKE_SOURCE_TOKEN
@@ -316,7 +323,7 @@ catalog-refresh-generate: workflow-generator ## Regenerate the installed catalog
 	 chmod 0644 "$$rendered" && mv "$$rendered" .github/workflows/catalog-refresh.yaml
 
 .PHONY: workflows-generate
-workflows-generate: workflow-generator pipeline-dev-generate nvke-split-generate ## Regenerate producer, qualification, development and family bundles with their canonical generator stamp.
+workflows-generate: workflow-generator pipeline-dev-generate nvke-split-generate nvke-gpu-site-generate ## Regenerate producer, qualification, development, family and GPU site composite bundles with their canonical generator stamp.
 	@definition="$$(jq -er '.definitionPath | select(type == "string" and length > 0)' .github/nvkr-run/plan.json)" && \
 	 environment="$$(jq -er '.environmentPath | select(type == "string" and length > 0)' .github/nvkr-run/plan.json)" && \
 	 bin/nvkr-exec run generate --engine github \
@@ -347,19 +354,29 @@ nvke-split-check: workflow-generator ## Check the five independent NVKE family b
 			--environment "inputs/environments/github-nvke-$$family.yaml" --root . --check $(PROJECTION_PILOT_FLAG); \
 	done
 
-.PHONY: pipeline-dev-generate
-pipeline-dev-generate: workflow-generator ## Regenerate the full feature-branch development pipeline.
+# The GPU site composite owns a named production bundle and the fixed development bundle (ADR-26 §9).
+NVKE_GPU_SITE := inputs/definitions/nvke/gpu-site.composite.yaml
+
+.PHONY: nvke-gpu-site-generate
+nvke-gpu-site-generate: workflow-generator ## Regenerate the NVKE GPU site composite's named production bundle.
 	bin/nvkr-exec run generate --engine github \
-		--definition inputs/definitions/nvke/definition.yaml \
-		--environment inputs/environments/github-development.yaml \
-		--qualification-policy inputs/policies/nvke-development-qualification.yaml --root .
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-nvke-gpu-site.yaml --root .
+
+.PHONY: nvke-gpu-site-check
+nvke-gpu-site-check: workflow-generator ## Check the NVKE GPU site composite's member pins and named production bundle without changing files.
+	bin/nvkr-exec definition pin --check --definition $(NVKE_GPU_SITE)
+	bin/nvkr-exec run generate --engine github \
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-nvke-gpu-site.yaml --root . --check $(PROJECTION_PILOT_FLAG)
+
+.PHONY: pipeline-dev-generate
+pipeline-dev-generate: workflow-generator ## Regenerate the GPU site composite's feature-branch development pipeline.
+	bin/nvkr-exec run generate --engine github \
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-development.yaml --root .
 
 .PHONY: pipeline-dev-check
 pipeline-dev-check: workflow-generator ## Check development workflow generation without changing files.
 	bin/nvkr-exec run generate --engine github \
-		--definition inputs/definitions/nvke/definition.yaml \
-		--environment inputs/environments/github-development.yaml \
-		--qualification-policy inputs/policies/nvke-development-qualification.yaml --root . --check $(PROJECTION_PILOT_FLAG)
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-development.yaml --root . --check $(PROJECTION_PILOT_FLAG)
 
 .PHONY: pipeline-dev-run
 pipeline-dev-run: pipeline-dev-check ## Dispatch the clean, pushed current branch (PIPELINE_DEV_REPO=owner/repo).

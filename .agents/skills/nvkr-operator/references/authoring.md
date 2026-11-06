@@ -29,6 +29,9 @@ matching names or source URLs do not imply interchangeability. Output-specific c
 overlays bind exact predecessors. Do not silently refresh a stale overlay or independently bump a derived
 pin-set member.
 
+For native ARC inputs, follow [consumer toolchain access](../../../../docs/toolchain-maintenance.md#declare-consumer-access)
+to classify selected images in the Environment and bind the private reader before generation.
+
 ## Review changes with the CLI
 
 Capture a baseline Plan if valid inputs already exist. Use a fresh scratch directory for Plans and alternative
@@ -55,6 +58,13 @@ source key. Use `catalog pin-artifacts` for its supported acquired-artifact path
 rather than assuming every pin command has check mode. Derived members update through their owning source. The
 [pin-set guide](../../../../docs/generic-pin-set-example.md) and [catalog maintenance
 guide](../../../../docs/catalog-maintenance.md) cover coordinated updates and matching generator identity.
+
+When a pin feeds configured producer copies, follow the maintenance guide's
+[producer-copy sequence](../../../../docs/catalog-maintenance.md#maintain-producer-copies): check the old
+baseline before pin mutation, regenerate the configured overlays before dependent Run bundles, and require
+all byte-exact checks to pass. Keep excluded variants and downstream profile streams explicit. For new
+lock-derived command values, use the catalog guide's opt-in `sourceMetadata` bindings; commit-only pins
+require explicit, chart-validated stream metadata. Report changed Build Digests when migrating bindings.
 
 Never hand-edit `pins.lock.yaml`, generated `.github/workflows/nvkr-run.yml`, or managed `.github/nvkr-run/`
 members. Use the selected inputs and same CLI identity for generation and `--check`. Root generation is
