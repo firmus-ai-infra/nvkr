@@ -49,15 +49,12 @@ The named producer's workflow display name is `nvkr-project-<name>`, disjoint fr
 the default `nvkr-run-<Definition name>` and development `nvkr-dev-<Definition name>`.
 This keeps same-Definition bundles separate under GitHub's workflow-based concurrency
 and prevents a named producer from matching the default qualifier's display-name trigger.
-That separation is not a destination-wide lock. ADR-20's S3 extension restricts each enrolled physical
-namespace to one repository, workflow path, display name/bundle, exact ref and evaluated non-canceling
-group. Another repository, workflow, bundle, ref or transport alias cannot bypass that enrolled owner.
-The extension's admission remains implementation work.
-Cross-Run namespace serialization and atomic completion belong exclusively to `lifecycle`'s private
-delivery-namespace store (ADR-20); the workflow concurrency group is not that store.
-The enrolled workflow path is the bundle's entry workflow. Its exact manifest-owned partition workers remain
-within that entry's closure; they grant no second namespace owner or competing concurrency group. ADR-18's
-rule keeping OIDC jobs in the entry workflow remains in force.
+That separation is not a destination-wide lock. ADR-20's object-store publication uses immutable
+content keys, conditional creation and fully verified pinned reads so independent Runs can share a prefix.
+There is no namespace enrollment, mutable cross-Run coordinator or delivery-namespace store. The final
+transport inventory records completion of one copy; existing Run finalization still requires every selected
+publication operation. The bundle's exact manifest-owned partition workers remain within its entry closure.
+ADR-18's rule keeping OIDC jobs in the entry workflow remains in force.
 Workflow file paths and explicit signing identities retain the namespace contract above.
 Every generated execution, recovery and utility-container command selects that exact
 Plan path; validation rejects a bundle whose paths differ from the admitted Environment.
@@ -101,12 +98,12 @@ Plan at that layout and recheck its digest. Development mode changes Environment
 transport-independent logical Build identity. Its execution and retention policy is owned by ADR-18.
 Signed development also binds the disposable namespace and signer policy in this immutable Plan. Actual
 run-attempt destinations are derived by the execution owner under ADR-20; runtime substitutions never
-rewrite generated inputs or bypass drift checks. The maintained development bundle uses the complete M2
-Definition with its separate development Environment.
+rewrite generated inputs or bypass drift checks. The maintained development bundle uses the NVKE GPU site
+composite Definition with its separate development Environment (ADR-26 §9).
 
 For a plain Definition, `githubDevelopment: true` with a nonempty `githubBundle` is unsupported and
-returns `CodeEngineCapability` before catalog resolution or generated-output work. A composite without
-`githubBundle` is refused the same way, because the fixed layout is reserved (ADR-26 §9).
+returns `CodeEngineCapability` before catalog resolution or generated-output work. A composite may use the
+fixed layout or a named development layout; only composites may use a named one (ADR-26 §9).
 Unnamed development and named production remain separate supported selections.
 
 Execution identity and transaction identity are separate. The Plan binds authored inputs and every executable
@@ -247,13 +244,25 @@ A pin or catalog change moves the IR, which moves the emitted pipeline. The two 
 - `run generate` after `catalog bump` regenerates the pipeline in the **same
   change** as the lock edit. The drift gate (§2) makes a lock change **unmergeable without the matching pipeline
   regen**, so "forgot to regenerate" is structurally impossible to merge.
-- `catalogmaintenance` owns an explicitly configured review-candidate refresh: check the existing bundle,
-  atomically bump selected independent roots and their declared pin sets, regenerate, and repeat the drift
+- `catalogmaintenance` owns an explicitly configured review-candidate refresh: check the existing bundle
+  and any configured producer overlays, atomically bump selected independent roots and their declared pin sets,
+  regenerate producer overlays before dependent Run bundles, and repeat the drift
   check. No-op preserves bytes. `--check` previews only the complete pin transaction, without writes or a
   claim that candidate production was exercised. Locks and generated files retain separate transactions;
   failure after pin commit leaves a disposable checkout for diagnosis, never a publishable candidate.
   Recovery context preserves the generating owner's coded cause, including retryable cancellation and
   non-retryable generated-file drift during either generation pass.
+- Optional `producerOverlays` names a strict `nvkr.dev/producer-overlay-maintenance/v1` input. Its ordered
+  entries declare source catalogs and exact producer IDs, existing named overlay destinations, base catalogs,
+  ordered predecessors and any explicitly frozen complete replacements. The maintenance owner derives
+  predecessor digests and uses the catalog's whole-producer validator. Missing or ambiguous producers,
+  invalid ordering, path escapes and destination ownership conflicts fail before any write. Check mode
+  compares exact bytes without opening a writer guard. A persistent kernel-released guard serializes writers;
+  all destination bytes undergo CAS and all changes are staged before per-file rename and directory fsync.
+  The set is not a cross-file atomic transaction. Interrupted regeneration is repaired by rerunning this
+  owner and all dependent bundle generators, then checking the complete candidate. A failed pass retains
+  its coded cause and never reports candidate success. The maintenance workflow transports only the exact
+  configured overlay destinations alongside its existing lock and bundle allowlist.
 - `catalog update-ci` takes no policy path and renders a separate GitHub workflow that discovers the one
   `inputs/policies/*-catalog-maintenance.yaml` when it runs (several share the repository-root generated bundle
   and are refused), with a reviewed schedule (nightly unless one is given, so pins stay current without an
@@ -433,6 +442,16 @@ and worktrees retain Git's ordinary review and merge-conflict behavior.
 maintenance regenerates a candidate by invoking the existing owners (`run generate` and the qualification
 generator); it renders none of their files itself. Conflating two "CI" artifacts under one verb is
 disallowed; that ambiguity is what makes forgotten-regen drift possible.
+
+Native Packer/inspector maintenance is a separate authored hosted workflow. It reuses native preparation,
+retains exact source/archive/image/executable measurements, and requires a reviewed main-branch per-image
+candidate exception with approver, scope, expiry and license/security review references before publication.
+Both architectures and all subjects are admitted before the first write. Publication is limited to the
+existing internal candidate packages inside the protected publication environment. Independent-reader
+registry read-back and native pulls precede a review-only catalog/overlay/Environment pin change; the existing
+owners regenerate all dependent bundles. Exceptions grant no general approval or qualification, and ordinary
+producer Runs never rebuild toolchains implicitly. The operational owner, cadence, retention and rollback
+procedure live in the maintenance guide; external exercise is recorded in reconciliation.
 
 ## Consequences
 

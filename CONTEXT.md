@@ -18,7 +18,8 @@ _Avoid_: Factory, FactoryDefinition, cluster definition
 **Environment**:
 Separately selected execution settings, required publication transports and namespace, credential references,
 and signing identity policy. Selecting an unavailable transport fails before work; a supported sibling cannot
-substitute for it.
+substitute for it. Native toolchain access separately declares private and anonymous image roots and
+an independent reader; publication namespaces grant no pull access. Unclassified native images fail admission.
 Native hosted platform routes are explicit execution settings; they do not change logical Build identity
 or prove provider allocation. Tool releases are catalog-owned dependencies selected by purpose in the Definition. GitHub action releases
 are also catalog dependencies ([ADR-22](docs/adr/0022-catalog-pinning-and-the-lock-contract.md#github-action-dependencies)).
@@ -27,9 +28,8 @@ native disk and pipeline-attested stages with separate signer policy, credential
 registry namespaces. Cleanup admits only internal-visibility packages in those namespaces.
 Unsigned development remains static-unqualified. Neither setting grants production
 acceptance, provider access or qualified evidence.
-ADR-20 specifies an S3 extension with typed file destinations under Environment publication settings.
-Destinations and clean boot URLs remain transport configuration; they do not change producer Build identity.
-Its future schema reservation does not change the implemented Environment version or enable delivery.
+ADR-20's object-store publication configures required S3 destinations separately from producer identity.
+It copies complete existing signed publications and original evidence through a generic byte transport.
 _Avoid_: Delivery profile, component catalog, build identity
 
 **Run**:
@@ -85,6 +85,12 @@ The derived ordinary Definition that composite admission produces by merging its
 catalog stack made explicit. It is an internal record, recorded by digest in the composite's Plan; it is never
 authored or selected as input.
 _Avoid_: Flattened file, combined candidate, authored Definition
+
+**Declared variant (proposed)**:
+A composite Definition's explicit permission for named members to select different effective producers of
+one component. Proposed ADR-26 binds it into the composite identity and composition record; any cross-member
+producer divergence it does not cover fails compilation.
+_Avoid_: Override, pin exception, allowlist
 
 **Named output**:
 A Definition's declaration of exact selected producers, concrete target platform or explicit aggregate image
@@ -196,6 +202,8 @@ _Avoid_: Release, binary bundle, editable workflow scaffold
 A review-only lock and regenerated execution-bundle change under explicit source-selection constraints.
 Static checks and optional complete local diagnostic execution precede candidate handoff; neither is release
 acceptance. Scheduling and source-role alignment are operational policy, not additional lifecycle objects.
+Native toolchain maintenance additionally binds candidate-only exceptions to exact image subjects;
+independent-reader/native verification precedes the review-only pin and generated-bundle change.
 _Avoid_: Release, qualified reproduction, automatic promotion
 
 **Runnable OCI image index**:
@@ -225,26 +233,12 @@ producer. The same package bytes can be supplied as an OS build material. Local 
 installation or runtime acceptance.
 _Avoid_: APT repository, installed package, builder type
 
-**Native file output**:
-The Artifact representation specified in ADR-20 for unchanged producer-created Debian packages, EFI/iPXE
-files and installer assets. All regular files in an archive retain the parent archive identity, canonical
-member name, digest, size, mode and declared kind. File integrity is distinct from package dependencies and
-boot readiness. Implementation remains outstanding under the ADR-20 contract.
-_Avoid_: Reconstructed package, executable tool, installed inventory
-
-**File-delivery root**:
-A generated record with a detached signature, binding selected authenticated source publications and exact
-named payload and evidence objects to their S3 routes and read-back observations. It preserves original
-provenance and adds no build, boot or qualification verdict. Implementation remains outstanding under the
-specified contract.
-_Avoid_: Authored lifecycle object, replacement source release, successful upload flag
-
-**File-delivery locator**:
-Caller-pinned transport coordinates and raw hashes/sizes for the delivery document and detached bundle.
-It locates proof; independent consumer policy and complete-byte checks establish acceptance. A final commit
-may exist after lost acknowledgement, so an indeterminate producer result requires independent reconciliation.
-Implementation remains outstanding under the ADR-20 contract.
-_Avoid_: Trusted policy, mutable release name, atomic bucket transaction
+**Object-store publication**:
+A required immutable copy of a complete original signed publication and its artifact/evidence closure.
+S3 is the first provider. The transport inventory locates original bytes and proof bundles; consumer policy
+and complete verification establish acceptance. It changes neither Build identity nor the original signature
+subject and grants no destination authorization, boot, installation or qualification claim.
+_Avoid_: New signed release, successful upload flag, mutable channel, atomic bucket transaction
 
 ## Evidence and authority
 
@@ -271,6 +265,20 @@ admission and frozen dispatch for the existing process-contract and mixed CLI su
 provisional; published adapters, controller/chart checks and broader migration are deferred. Existing legacy
 validation routes retain their separate admission and capture contracts.
 _Avoid_: Producer catalog, upstream test implementation, executable plugin, qualification policy
+
+**Cluster observation (proposed)**:
+A scoped, time-bounded record of discovered cluster facts, their sources and collection gaps. Raw AICR
+Snapshot inputs are distinct from this NVKR observation. Information gathering does not require a build
+baseline or test run. Lane none: unsigned and descriptive. Proposed in
+[ADR-29](docs/adr/0029-cluster-observation-and-artifact-attribution.md); the standalone route is not implemented.
+_Avoid_: Artifact comparison, authored lifecycle object, complete host attestation, test verdict
+
+**Artifact comparison (proposed)**:
+A descriptive comparison of a cluster observation with selected NVKR outputs and their evidence, under
+an explicit scope and comparison profile, distinct from the public Verification Policy. Reports produced/acquired
+identity, installation attribution and measured contents separately. Missing baselines or unsupported joins remain unverified; observations can
+still be useful without a comparison. Proposed in ADR-29; no qualification, signing or release authority.
+_Avoid_: Cluster observation, verified installation from a version label, qualification receipt
 
 **Release authenticity**:
 Acceptance of a Release's signed membership, each named output's signatures and production provenance, and required inventories under consumer policy, without checking artifact payload bytes. It establishes neither payload integrity nor release qualification.
@@ -358,6 +366,15 @@ independently selected qualification identity, and is attested to the publicatio
 A manifest attachment alone is not a published release; tags, channels and revocation are separate.
 _Avoid_: Release clearance, ReleaseSet, qualified release, tag
 
+**Qualification outcome**:
+An unsigned description of one release qualification attempt: passed, failed in qualification or manifest
+issuance, or errored, with the source and qualifier Runs, attempt times, per-output checks and scrubbed error
+text. It points at the qualification evidence and release manifest by digest and grants no qualification,
+manifest, release or publication authority. An errored outcome's source Run comes from the unauthenticated
+triggering event and says so. `run qualify --issue-manifest --out` writes one for each attempt it qualifies;
+publishing outcomes is not implemented.
+_Avoid_: Qualification record, qualification evidence, test result
+
 **Inventory**:
 The internal qualified-lane declaration of required component membership, exact artifact identities, and compatibility requirements.
 _Avoid_: List of successful outputs, component catalog
@@ -426,6 +443,8 @@ _Avoid_: Run-wide pipeline tool, release executable output, build script
 An ordered, predecessor-bound catalog change replacing a complete component producer or performing an exact
 toolchain-pin substitution for an explicit sorted component set and host architecture. Substitution fails if
 any selected producer does not carry the expected old pin; it is not a partial producer merge.
+Explicit maintenance inputs may regenerate complete producer copies and ordered predecessor bindings.
+Source metadata bindings derive build environment values from each copied producer's own pin.
 _Avoid_: Output selection group, mixin, deployment topology
 
 **Derived pin set**:

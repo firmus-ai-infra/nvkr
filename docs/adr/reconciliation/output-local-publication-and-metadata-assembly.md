@@ -72,6 +72,12 @@ Filtering follows complete metadata validation; detached views establish no regi
 Artifact views also expose config-derived OS/architecture and Helm chart version (not appVersion), with
 native indexes retaining child platforms. Full Helm verification compares the config with Chart.yaml.
 Generic release export and JSON browsing share the explicit `nvkr.dev/release-description/v1` schema.
+Helm outputs expose `helm.defaultDigest` in AICR's `sha256:<64 lowercase hex>` format. Delivery projects
+the existing publication blob digest checked against the chart-content layer; manifest identities and
+publication records are unchanged. Contract tests compare it with exact packaged archive bytes, retain it
+with missing or corrupt payloads during metadata inspection, reject a mismatched publication binding,
+omit it for other output kinds and cover filtered JSON. The lifecycle test exercises source-chart packaging
+through release export. These tests do not establish AICR bundle execution or external registry acceptance.
 Export requires only the immutable publication reference and preserves every named output, native platform,
 aggregate image-index digest/child membership and exact evidence/source binding. Source repository/commit
 descriptions come from output-bound source SBOM properties, without inferred Git tags or a release-wide
@@ -571,8 +577,11 @@ has its own provider success condition, removing accidental unrelated-output bar
 still requires every job and exact carrier. The projected provider graph is checked for cycles.
 Redundant direct dependency edges are removed only when the full ancestor closure is preserved. Authored
 setup, runtime variables, images or services mentioning `needs` retain ordinary direct lists. Large
-finalizers use 16 fixed FNV-1a buckets, each limited to 64 jobs, to forward exact original results. Addition
-does not rebalance existing membership; overflow fails before generation returns output. Collectors have no
+finalizers use the narrowest of 16, 32 or 64 fixed FNV-1a buckets whose fullest bucket holds at most 64
+jobs to forward exact original results; finalizers that fit 16 buckets keep their membership, and committed
+16-bucket bundles regenerate byte-identically. At a given width, addition does not rebalance existing
+membership; 64-bucket overflow, or a layout over the finalizer parser's token budget, fails before
+generation returns output. Collectors have no
 token permissions, credentials, checkout or artifacts and introduce no producer execution barrier. Finalization
 requires successful collectors, their exact Plan-derived partition and strict bounded reports before recovery.
 The closing summary counts original outcomes, not collector success. Local contracts cover duplicate,

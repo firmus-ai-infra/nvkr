@@ -111,6 +111,12 @@ actionlint: go-version-check ## Lint GitHub workflows with the actionlint pinned
 	GOBIN="$(CURDIR)/bin" go -C toolchains/actionlint install tool
 	"$(CURDIR)/bin/actionlint"
 
+.PHONY: test-workflow-scripts
+test-workflow-scripts: ## Test the triage and PR-metadata workflow scripts (needs node and npm).
+	@command -v node >/dev/null 2>&1 || { echo "node not installed — https://nodejs.org/" >&2; exit 1; }
+	npm ci --prefix .github/scripts --ignore-scripts --no-audit --no-fund
+	node --test .github/scripts/triage.test.cjs
+
 .PHONY: test
 test: ## Fast default tests for CI and agents (no extended fixtures or instrumentation).
 	go test -timeout $(GO_TEST_TIMEOUT) $(GO_TEST_FLAGS) $(PKG)
@@ -132,6 +138,16 @@ test-full: ## Include extended capacity/integration fixtures with race + coverag
 test-ci-tools: ## Require Python and check CI sharding, reports and local adapters.
 	python3 -B -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else "Python 3.12+ is required for CI report tests")'
 	python3 -B -m unittest discover -s scripts -p '*_test.py'
+
+# Diff-scoped: only Markdown lines added since the merge base with STATUS_BASE are checked.
+# An empty STATUS_HEAD checks the working tree, including uncommitted and untracked files;
+# CI sets both to the pull request's base and head commits.
+STATUS_BASE ?= origin/main
+STATUS_HEAD ?=
+
+.PHONY: status-restated-check
+status-restated-check: ## Fail when added docs restate validation status outside the reconciliation ledger.
+	python3 -B scripts/check-status-restated.py '$(STATUS_BASE)' '$(STATUS_HEAD)'
 
 .PHONY: cover
 cover: test-race ## Open the HTML coverage report in a browser.
@@ -261,7 +277,7 @@ PROJECTION_PILOT ?=
 PROJECTION_PILOT_FLAG = $(if $(PROJECTION_PILOT),--projection-pilot=$(PROJECTION_PILOT))
 
 .PHONY: workflows-check
-workflows-check: workflow-generator pipeline-dev-check nvke-split-check catalog-refresh-check ## Check committed producer, qualification, development and family bundles and the catalog refresh workflow for drift.
+workflows-check: workflow-generator producer-overlays-check pipeline-dev-check nvke-split-check nvke-gpu-site-check catalog-refresh-check ## Check committed producer, qualification, development, family and GPU site composite bundles and the catalog refresh workflow for drift.
 	@# Repeat the committed Plan's authored selection, including focused feature-branch
 	@# Definitions. The generator still authenticates the complete bundle and inputs.
 	@definition="$$(jq -er '.definitionPath | select(type == "string" and length > 0)' .github/nvkr-run/plan.json)" && \
@@ -277,6 +293,13 @@ workflows-check: workflow-generator pipeline-dev-check nvke-split-check catalog-
 		--definition inputs/definitions/demo/arm64-upstream-kvm.json \
 		--environment inputs/environments/github-nightly-upstream.json \
 		--root . --runtime --check
+
+.PHONY: producer-overlays-check producer-overlays-generate
+producer-overlays-check: workflow-generator ## Check configured producer copies and predecessor bindings.
+	bin/nvkr-exec catalog regenerate-overlays --config inputs/policies/ovn-producer-overlays.json --check
+
+producer-overlays-generate: workflow-generator ## Regenerate configured producer copies and predecessor bindings.
+	bin/nvkr-exec catalog regenerate-overlays --config inputs/policies/ovn-producer-overlays.json
 
 # The private NVKE source the installed catalog refresh workflow was rendered with.
 CATALOG_REFRESH_SOURCE ?= dsx-ai-factory/nvke:NKE_SOURCE_TOKEN
@@ -300,7 +323,7 @@ catalog-refresh-generate: workflow-generator ## Regenerate the installed catalog
 	 chmod 0644 "$$rendered" && mv "$$rendered" .github/workflows/catalog-refresh.yaml
 
 .PHONY: workflows-generate
-workflows-generate: workflow-generator pipeline-dev-generate nvke-split-generate ## Regenerate producer, qualification, development and family bundles with their canonical generator stamp.
+workflows-generate: workflow-generator pipeline-dev-generate nvke-split-generate nvke-gpu-site-generate ## Regenerate producer, qualification, development, family and GPU site composite bundles with their canonical generator stamp.
 	@definition="$$(jq -er '.definitionPath | select(type == "string" and length > 0)' .github/nvkr-run/plan.json)" && \
 	 environment="$$(jq -er '.environmentPath | select(type == "string" and length > 0)' .github/nvkr-run/plan.json)" && \
 	 bin/nvkr-exec run generate --engine github \
@@ -331,32 +354,42 @@ nvke-split-check: workflow-generator ## Check the five independent NVKE family b
 			--environment "inputs/environments/github-nvke-$$family.yaml" --root . --check $(PROJECTION_PILOT_FLAG); \
 	done
 
-.PHONY: pipeline-dev-generate
-pipeline-dev-generate: workflow-generator ## Regenerate the full feature-branch development pipeline.
+# The GPU site composite owns a named production bundle and the fixed development bundle (ADR-26 §9).
+NVKE_GPU_SITE := inputs/definitions/nvke/gpu-site.composite.yaml
+
+.PHONY: nvke-gpu-site-generate
+nvke-gpu-site-generate: workflow-generator ## Regenerate the NVKE GPU site composite's named production bundle.
 	bin/nvkr-exec run generate --engine github \
-		--definition inputs/definitions/nvke/definition.yaml \
-		--environment inputs/environments/github-development.yaml \
-		--qualification-policy inputs/policies/nvke-development-qualification.yaml --root .
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-nvke-gpu-site.yaml --root .
+
+.PHONY: nvke-gpu-site-check
+nvke-gpu-site-check: workflow-generator ## Check the NVKE GPU site composite's member pins and named production bundle without changing files.
+	bin/nvkr-exec definition pin --check --definition $(NVKE_GPU_SITE)
+	bin/nvkr-exec run generate --engine github \
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-nvke-gpu-site.yaml --root . --check $(PROJECTION_PILOT_FLAG)
+
+.PHONY: pipeline-dev-generate
+pipeline-dev-generate: workflow-generator ## Regenerate the GPU site composite's feature-branch development pipeline.
+	bin/nvkr-exec run generate --engine github \
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-development.yaml --root .
 
 .PHONY: pipeline-dev-check
 pipeline-dev-check: workflow-generator ## Check development workflow generation without changing files.
 	bin/nvkr-exec run generate --engine github \
-		--definition inputs/definitions/nvke/definition.yaml \
-		--environment inputs/environments/github-development.yaml \
-		--qualification-policy inputs/policies/nvke-development-qualification.yaml --root . --check $(PROJECTION_PILOT_FLAG)
+		--definition $(NVKE_GPU_SITE) --environment inputs/environments/github-development.yaml --root . --check $(PROJECTION_PILOT_FLAG)
 
 .PHONY: pipeline-dev-run
 pipeline-dev-run: pipeline-dev-check ## Dispatch the clean, pushed current branch (PIPELINE_DEV_REPO=owner/repo).
 	python3 scripts/pipeline-dev.py --repo "$$PIPELINE_DEV_REPO"
 
 .PHONY: check
-check: go-version-check fmt-check definitions-location-check reconciliation-location-check license-header-check vet lint shellcheck test-ci-tools test vulncheck ## Code gate: format, Definition and ledger location, license, vet, lint, shell, tool tests, Go tests, vulnerabilities.
+check: go-version-check fmt-check definitions-location-check reconciliation-location-check license-header-check status-restated-check vet lint shellcheck test-ci-tools test vulncheck ## Code gate: format, Definition and ledger location, license, restated status, vet, lint, shell, tool tests, Go tests, vulnerabilities.
 
 # Every merge-gate check that can run locally; CI runs `make test` as test-shard
 # slices. internal/cicontract requires this list to equal the make targets the
 # merge gate runs. CodeQL and the DCO App run only on GitHub.
 # Checks needing extra tools or private access run before the long test suite.
-CI_CHECKS := fmt-check definitions-location-check reconciliation-location-check license-header-check shellcheck actionlint \
+CI_CHECKS := fmt-check definitions-location-check reconciliation-location-check license-header-check status-restated-check shellcheck actionlint test-workflow-scripts \
 	notices-check workflows-check docs-check vet test-ci-tools build lint vulncheck test
 
 .PHONY: ci-check

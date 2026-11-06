@@ -302,6 +302,13 @@ func renderGitHubFlat(ctx context.Context, plan *Plan, validate bool) (*Generate
 		if token := githubPublicationRepositoryToken(plan, node); token != "" {
 			env[githubRepositoryTokenEnv] = token
 		}
+		if IsObjectPublicationNode(plan, node.ID) {
+			destination, err := objectPublicationDestination(plan, node.Target)
+			if err != nil {
+				return nil, err
+			}
+			env["NVKR_S3_ROLE_ARN"] = "${{ vars['" + strings.TrimPrefix(destination.S3.RoleRef, "github:") + "'] }}"
+		}
 		if len(env) > 0 {
 			fmt.Fprintln(&body, "    env:")
 			for _, k := range sortedKeys(env) {
@@ -340,8 +347,8 @@ func renderGitHubFlat(ctx context.Context, plan *Plan, validate bool) (*Generate
 		}
 		if privateImages {
 			fmt.Fprintln(&body, "      - name: Prepare private native toolchains\n        env:")
-			for _, key := range sortedKeys(githubImageEnvironment()) {
-				fmt.Fprintf(&body, "          %s: %s\n", key, yamlSingle(githubImageEnvironment()[key]))
+			for _, key := range sortedKeys(githubImageEnvironment(plan)) {
+				fmt.Fprintf(&body, "          %s: %s\n", key, yamlSingle(githubImageEnvironment(plan)[key]))
 			}
 			fmt.Fprintf(&body, "        run: %s\n", githubRunnerCommand(plan, "prepare-images", "stage", stage.ID))
 		}
@@ -532,7 +539,7 @@ func githubSigningPermissionsFor(plan *Plan, kind string) map[string]string {
 }
 
 // ProductionRegistryWriteCredential selects independently scoped production accounts.
-const ProductionRegistryWriteCredential = "github:NVKR_REGISTRY_WRITE"
+const ProductionRegistryWriteCredential = authored.ProductionRegistryWriteCredential
 
 func githubScopedPublication(plan *Plan) bool {
 	return plan.Environment.GitHubDevelopment ||
@@ -543,6 +550,9 @@ func githubScopedPublication(plan *Plan) bool {
 // Development readers never receive the writer token; SBOM attestation has no
 // registry credential. Environment admission binds the development writer name.
 func githubRegistryEnvironment(plan *Plan, kind, targetName string) (map[string]string, error) {
+	if plan.Targets[targetName].Kind == TargetObject {
+		kind, targetName = NodeVerifyPublication, "release"
+	}
 	target := plan.Targets[targetName]
 	if target.CredentialRef == "" || kind == NodeAttestEvidence {
 		return nil, nil
@@ -583,6 +593,9 @@ func githubRegistryEnvironment(plan *Plan, kind, targetName string) (map[string]
 // Only publication performs this admission; producers and other release stages
 // receive no repository metadata credential through their job environment.
 func githubPublicationRepositoryToken(plan *Plan, node Node) string {
+	if IsObjectPublicationNode(plan, node.ID) {
+		return ""
+	}
 	if node.Kind == NodePublish && strings.HasPrefix(plan.Targets[node.Target].Ref, "ghcr.io/") {
 		return "${{ github.token }}"
 	}

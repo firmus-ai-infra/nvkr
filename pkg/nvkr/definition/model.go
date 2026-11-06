@@ -23,21 +23,22 @@ import (
 )
 
 const (
-	DefinitionAPIVersion         = "nvkr.dev/definition/v5"
-	DefinitionKind               = "Definition"
-	EnvironmentAPIVersion        = "nvkr.dev/environment/v1"
-	EnvironmentKind              = "Environment"
-	OutputExecutable             = "executable"
-	OutputOCI                    = "oci"
-	OutputAPT                    = "apt-repository"
-	OutputHelm                   = "helm-oci"
-	OutputBundle                 = "bundle-oci"
-	OutputDiskImage              = "disk-image"
-	OutputDebianPackage          = "debian-package"
-	PublicationTransportAPT      = "apt"
-	PublicationTransportOCI      = "oci"
-	BuildNetworkOfflineOnly      = "offline-only"
-	BuildNetworkProducerDeclared = "producer-declared"
+	DefinitionAPIVersion              = "nvkr.dev/definition/v5"
+	DefinitionKind                    = "Definition"
+	EnvironmentAPIVersion             = "nvkr.dev/environment/v1"
+	EnvironmentObjectStoresAPIVersion = "nvkr.dev/environment/v2"
+	EnvironmentKind                   = "Environment"
+	OutputExecutable                  = "executable"
+	OutputOCI                         = "oci"
+	OutputAPT                         = "apt-repository"
+	OutputHelm                        = "helm-oci"
+	OutputBundle                      = "bundle-oci"
+	OutputDiskImage                   = "disk-image"
+	OutputDebianPackage               = "debian-package"
+	PublicationTransportAPT           = "apt"
+	PublicationTransportOCI           = "oci"
+	BuildNetworkOfflineOnly           = "offline-only"
+	BuildNetworkProducerDeclared      = "producer-declared"
 )
 
 var dispatchBranchPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
@@ -127,10 +128,11 @@ type Environment struct {
 	// GitHubRunners selects explicit native hosted routes by execution platform.
 	GitHubRunners map[string]string `json:"githubRunners,omitempty"`
 
-	SourceAccess map[string]SourceAccess `json:"sourceAccess,omitempty"`
-	Publication  *Publication            `json:"publication,omitempty"`
-	Runtime      Runtime                 `json:"runtime,omitempty"`
-	Signing      *Signing                `json:"signing,omitempty"`
+	SourceAccess    map[string]SourceAccess `json:"sourceAccess,omitempty"`
+	ToolchainAccess *ToolchainAccess        `json:"toolchainAccess,omitempty"`
+	Publication     *Publication            `json:"publication,omitempty"`
+	Runtime         Runtime                 `json:"runtime,omitempty"`
+	Signing         *Signing                `json:"signing,omitempty"`
 }
 
 // SourceAccess configures transport-only authentication and mirroring for one
@@ -144,6 +146,7 @@ type SourceAccess struct {
 // Publication selects required transports. The admitted OCI route uses one namespace;
 // release metadata/evidence use /releases and outputs use named sibling repositories.
 type Publication struct {
+	ObjectStores []ObjectStoreDestination `json:"objectStores,omitempty" yaml:"objectStores,omitempty"`
 	// Transports is a sorted, unique selection. Omission preserves the OCI route.
 	// APT is recognized but unavailable until its publication adapter is admitted.
 	Transports []string `json:"transports,omitempty"`
@@ -283,8 +286,22 @@ func (definition Definition) Digest() (string, error) {
 }
 
 func (environment Environment) Validate() error {
-	if environment.APIVersion != EnvironmentAPIVersion || environment.Kind != EnvironmentKind || !namePattern.MatchString(environment.Metadata.Name) {
+	if (environment.APIVersion != EnvironmentAPIVersion && environment.APIVersion != EnvironmentObjectStoresAPIVersion) || environment.Kind != EnvironmentKind || !namePattern.MatchString(environment.Metadata.Name) {
 		return e.New(e.CodeInvalidCatalog, "environment has unsupported apiVersion/kind or invalid name")
+	}
+	if err := environment.validateObjectStores(); err != nil {
+		return err
+	}
+	if err := environment.ToolchainAccess.Validate(); err != nil {
+		return err
+	}
+	if access := environment.ToolchainAccess; access != nil && access.Reader != nil {
+		ref := access.Reader.CredentialRef
+		if strings.EqualFold(ref, development.WriteCredentialRef) ||
+			strings.EqualFold(ref, ProductionRegistryWriteCredential) ||
+			(environment.Publication != nil && strings.EqualFold(ref, environment.Publication.CredentialRef)) {
+			return e.New(e.CodeInvalidCatalog, "toolchainAccess reader must not use a publication writer credential")
+		}
 	}
 	if environment.GitHubDevelopment && environment.GitHubBundle != "" {
 		if err := environment.admitNamedDevelopment(); err != nil {
