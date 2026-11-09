@@ -73,8 +73,11 @@ several digest-pinned member Definitions through one Plan, Run and Release. Its
 and [member Release reuse](adr/0026-definition-composition.md#6-reusing-already-published-member-releases-only-through-authenticated-acceptance-a-planned-follow-up)
 and [evidence lanes](adr/0026-definition-composition.md#7-evidence-lanes-no-stronger-than-the-weakest-contribution)
 own what a composite inherits. Admission, merge, composite Plans, generation including named development
-bundles, Run and publication records and consumer expectations are implemented and contract-tested only; member
-Release reuse and composite qualification are deferred and refused, and no hosted composite Run exists.
+bundles, Run and publication records, consumer expectations and hosted complete-composite qualification
+are implemented with contract tests. Qualification binds the full composition through artifact checks, smoke
+evidence and the production manifest; explicit policies select production/development pairs and bundle-archive
+applicability without deployment claims. Member Release reuse and local composite qualification rehearsal remain
+deferred and refused; no hosted composite acceptance is recorded.
 
 Proposed [ADR-27](adr/0027-pinned-tool-producers.md) designs pinned-tool producers: catalog components that run
 one released, digest-pinned executable in the `wrapped-build` lane. AICR bundles are the first use. ADR-27 owns
@@ -365,7 +368,8 @@ and describes attempt markers without opening payloads or restoring authority.
 Public command result browsers also consume typed projections after their owning
 operations return and release receipts. Maintenance transactions and verifier
 scope remain with their existing owners; closing a view neither repeats nor
-reverses an operation. These presentation records are outside artifact/Plan/Run identity.
+reverses an operation. The registry release browser also displays provisional loading entries during metadata acquisition; final
+closure and composition checks gate its completed view. These presentation records are outside artifact/Plan/Run identity.
 
 A named Artifact keeps its payload digest across Run and Release views. The enclosing publication root has a
 separate identity. Release content binds the exact named payload membership, and the outer publication carries
@@ -379,7 +383,9 @@ payload bytes. Locators derive from the supplied root namespace; the detached de
 registry-availability claim. Selecting an output changes the presentation only after all metadata is checked.
 These views explicitly label metadata inspection, leave payloads, signatures and consumer policy unverified,
 and cannot restore a live verification capability. Artifact-publication verification retains its full payload
-and policy checks; authenticity applies signature/evidence policy to the metadata closure.
+and policy checks; authenticity applies signature/evidence policy to the metadata closure. Acquisition uses
+at most 16 member workers and an expendable root-digest-keyed cache that re-verifies blob hashes, sizes and
+closure before reuse. Cache contents never restore policy or signature acceptance.
 [Release navigation](release-navigation.md) documents the registry and local entry points and
 their validation scope.
 
@@ -568,10 +574,22 @@ platforms. Artifact kinds and producer metadata govern format admission directly
 
 A Definition selects producers and output-affecting settings directly on named outputs. An Environment supplies
 runtime settings, runner routes and execution classes, required publication transports and namespace,
-credential references, and signing identity/issuer policy. Native toolchain access declares private and
-anonymous roots independently of publication, with one reader for private roots. Unclassified native
-images or selected private roots without a reader fail generation before output. The compiler derives
-routine packaging and routes.
+credential references, and signing identity/issuer policy. Image access declares private and
+anonymous roots independently of publication, with one reader for private roots. Every GitHub image consumer
+is inventoried before renderer grouping; unclassified images or unsupported private routes fail generation
+before output. Exact source/location bindings preserve logical Build identity. Measured local images and
+native bundle digests are separate sources, never registry references. The compiler derives
+routine packaging and routes. Runtime image admission shares a local-first owner across utility,
+ordinary producer and held image checks. Its process-local receipt binds the exact subject, platform,
+local config ID and observed runtime identity. Only an explicit anonymous route can materialize a
+missing image; private consumers require separately scoped preparation and never retry anonymously.
+Factory consumers recheck local bytes before launch and prohibit implicit pulls.
+Declared-access GitHub Plans schedule bounded manifest/config reader probes after final runtime Plan
+delivery, separately per selected runner placement, and gate producer fan-out on success. The probe
+owner records sorted Plan/subject/route/time observations without downloading layers. These describe
+point-in-time availability, not release authority; per-job materialization and exact runtime checks
+remain required. Complete cross-owner image inventory and fresh-runner external acceptance are
+tracked separately in reconciliation.
 Regeneration records the exact
 Definition and Environment input paths.
 Changing an Environment can change prepared execution and generated bytes without changing a resolved build graph;
@@ -848,7 +866,8 @@ through `run qualify --issue-manifest`, retaining live receipts and the exact ca
 independently loaded qualification policy selects the expected signer and policy digest. Development stays
 qualification-only. The production qualifier also writes an unsigned qualification outcome with `--out` for
 each attempt it qualifies and uploads it, failed and errored attempts included; it points at the
-evidence and manifest by digest, grants no authority, and is not yet published. Issuance has contract coverage only; hosted acceptance remains unproved. A failing,
+evidence and manifest by digest and grants no authority. A separate helper, `nvkr-results-publish`, selects and
+publishes outcomes to the proposed ADR-31 TestGrid results index; no generated job runs it yet. Issuance has contract coverage only; hosted acceptance remains unproved. A failing,
 incomplete or wrong-signer verdict prevents issuance. The immutable definition/commit tag remains proposed, and the mutable channel tag is
 deferred beyond the MVP.
 
@@ -1264,7 +1283,7 @@ already obtained.
 | Qualified provider observation, Nix, authority/discovery adapters and operational exercises | Qualified-lane module owners | Qualified production acceptance |
 | Qualified helper-image admission | Execution/trust owners | Exact executable/runtime receipt protocol; image pin alone is insufficient |
 | Deferred release registration transport | Registry/integration owners | Optional downstream discovery |
-| Proposed ADR-26 composite Definitions, then member Release reuse and composite qualification | Release-engineering, catalog, qualification and result-reuse owners | One combined Release from independently owned Definitions without a hand-maintained combined copy |
+| Hosted acceptance of ADR-26 composite qualification; local rehearsal and member Release reuse | Release-engineering, catalog, qualification and result-reuse owners | Governed composite cutover and optional member Release reuse |
 | Proposed ADR-27 pinned-tool producers, then AICR layout output (NVIDIA/aicr#3534) and layout import | Catalog, execution, evidence and release-engineering owners | Outputs rendered by released tools, starting with AICR bundles, without rebuilding the tool from source |
 | Proposed ADR-28 multi-platform executables, then the AICR migration and the per-platform retrofits | Catalog, release-engineering, delivery and evidence owners | One tool source per release where [ADR-28 §1](adr/0028-multi-platform-executable-indexes.md#1-one-tool-source-declares-every-platform) admits it, and one image-index output per executable, consumable by standard OCI clients |
 | Proposed ADR-29 observation owner and AICR import exception, bounded access/log/field controls, host/package provider and downstream installation/boot records | NVKR observation, AICR and downstream deployment owners; named deciders unassigned | Standalone descriptive collection and supported exact chart/disk/package comparisons |

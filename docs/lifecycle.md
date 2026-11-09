@@ -67,8 +67,9 @@ bin/nvkr definition pin --definition <composite.yaml> --check   # report drift, 
 bin/nvkr definition pin --definition <composite.yaml>           # rewrite only the stale digests
 ```
 
-Composite qualification, release manifests and runtime Plans are not implemented and fail with
-`engine-capability`.
+Hosted composite qualification binds the complete Release and its member attribution through artifact checks,
+native smoke evidence and production release manifests. Generation requires an explicit independent policy.
+Local composite qualification rehearsal and runtime Plans remain unsupported and fail with `engine-capability`.
 
 For saved generated Plans, `run plan --plan <path>` prints the required outputs and instructions;
 `--pretty` provides an indented display view. `run graph` exports complete linked producer/artifact graphs,
@@ -620,7 +621,8 @@ failed setup step or an empty source credential), that the command refuses befor
 command times out before writing it (a caller's work deadline, or the runner stopping the step at its
 timeout), or whose record cannot be written; `outcome-written` is then `false`. A canceled job writes none
 either, and its `outcome-written` is empty because the presence step does not run. An outcome is a
-description: it grants no qualification, manifest or release authority, and no publisher consumes it yet.
+description: it grants no qualification, manifest or release authority. The `nvkr-results-publish` helper
+publishes outcomes to the results index of proposed ADR-31, but no generated job runs it yet.
 
 Add `--qualification-policy qualification.yaml` to the normal `run generate` invocation to generate the
 qualifier and its native smoke worker alongside the producer. The worker is a generated reusable GitHub

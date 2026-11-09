@@ -355,6 +355,12 @@ the hosted certificate identity or complete this external acceptance requirement
 
 Qualification evidence binds its schema and gate version, exact subject membership, producing Run/attempt/commit,
 Definition and relevant input identities, source build identity, qualification invocation and per-check results.
+For composite Runs, the handoff replays all pinned member inputs and the exact-input verifier authenticates
+the complete composition record against the publication. Artifact checks, worker evidence, qualification
+evidence and the release manifest carry that same record and bind its composite digest and complete output
+attribution (ADR-26 U8). A member Run's evidence cannot qualify the composite. Explicit `bundle-archive`
+applicability permits bundle outputs only after delivery validates their exact wrapper and complete bounded
+archive; no deployment, cluster execution or application compatibility is claimed.
 Version 2 additionally requires the full independent policy and authenticated per-member native worker
 observations; the v1 placeholder shape cannot satisfy this gate. Its canonical schema and family are registered
 in ADR-01 before use. Signing and attachment use the admitted
@@ -390,6 +396,9 @@ Attestation and verification are not atomic: an operational failure may leave a 
 reported as a failed issuance. The release tag rule, tag creation, publisher exclusion, consumer manifest
 verification and interruption handling belong to the separate M4 publication step; a manifest attachment alone
 does not establish a release.
+
+Proposed ADR-31 indexes each production qualification attempt, failures included, as an unsigned outcome that
+points at this evidence and manifest by digest. The index grants no qualification, manifest or release authority.
 
 Full disk inspection/material reconciliation, waivers, offline pull-request qualification, a dedicated
 verify-only dispatch and cross-run qualification reuse are deferred hardening. External qualification suites such as

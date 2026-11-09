@@ -37,6 +37,10 @@ intended work; it does not establish that the step succeeded.
 
 ## Generate and check the bundle
 
+Before generation, [declare consumer image access](https://github.com/dsx-ai-factory/nvkr/blob/main/docs/toolchain-maintenance.md#declare-consumer-access)
+for every selected producer, vendor, utility, inspector and startup image. Ordinary hosted Environments
+require explicit public roots too. Private ordinary-hosted and startup routes are refused.
+
 For one Definition whose generated workflow is too large, the Environment can select
 `githubExecutionPartitions: true`. Generation then emits an entry workflow and bounded sibling workers;
 all belong to one generated manifest, use one complete Plan and feed one Run finalizer and Release.
@@ -142,13 +146,17 @@ toolchain and smoke-image packages. Configure secret `NVKR_REGISTRY_WRITE` and v
 `NVKR_REGISTRY_WRITE_USER` in the protected `nvkr-release` environment for publication, signing and
 qualification. Use separate accounts and tokens with read-only versus write package scopes; copying a
 write-capable PAT into the reader secret does not narrow its authority. The existing CI storage secrets
-remain unchanged. Native image preparation consumes its reader only in the preparation step.
+remain unchanged. Native image access scopes its reader to manifest preflight and per-job preparation.
 
 The repository-level `NVKR_REGISTRY_READ` secret and `NVKR_REGISTRY_READ_USER` variable are also
 required for private native toolchain and smoke-image pulls in development and legacy
 `github:GITHUB_TOKEN` output-publication profiles. Development output credentials do not replace this
 shared image reader. A missing reader refuses the pull; there is no workflow-token fallback.
-The entry workflow passes both reader values explicitly into composite actions, scoped to preparation.
+The entry workflow passes both reader values explicitly into composite actions, scoped to preflight
+and preparation. After final Plan validation or refresh, separate jobs check exact manifests and image
+configs on each selected runner placement before producers can start. These point-in-time observations
+download no layers and do not replace per-job pulls or runtime byte/platform checks. A failed reader
+check stops producer fan-out; source and publication credentials are never fallback readers.
 
 For each existing storage, release, toolchain and smoke-image package, an administrator must:
 1. Keep visibility private (or internal only when enterprise-wide access is intended).
