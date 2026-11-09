@@ -134,8 +134,9 @@ CONTAINER_RUNTIME=docker NVKE_OS_ARCH=amd64 scripts/nvke-os-local.sh local-amd64
 The default guest is Ubuntu 26.04. Set `NVKE_OS_UBUNTU_VERSION=24.04` to select the
 [Ubuntu 24.04.5 inputs](../inputs/definitions/diagnostics/ubuntu24/README.md), including their
 separate compatible agent compiler. The architecture and native KVM requirements stay the same.
-`scripts/push-node-image-s3.sh` uploads the Ubuntu 24.04.5 AMD64 disk from that
-wrapper, and the byte copy does not grant release authority.
+`scripts/push-node-image-s3.sh` uploads the Ubuntu 24.04.5 ARM64 disk from that
+wrapper as `nvke-node-image-ubuntu24-arm64-<short-git-sha>.qcow2`, and the byte copy
+does not grant release authority.
 
 `scripts/check-efi-build-host.sh` is a read-only preflight for building NVKE's `qcow-imager.efi`. It runs
 every check and prints one numbered list of what an administrator and the runner user must still do, then

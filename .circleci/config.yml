@@ -142,6 +142,34 @@ jobs:
             outdir=".nvkr/runs/${attempt}/outputs"
             qcow="${outdir}/nvke-node-image-ubuntu24-arm64.qcow2"
             test -f "${qcow}"
+            if [ -z "${CIRCLE_SHA1:-}" ]; then
+              echo "CIRCLE_SHA1 is required for the published disk name" >&2
+              exit 1
+            fi
+            head="$(git rev-parse HEAD)"
+            short="$(git rev-parse --short=12 HEAD)"
+            if [ "${CIRCLE_SHA1}" != "${head}" ]; then
+              echo "CIRCLE_SHA1 does not match git HEAD" >&2
+              exit 1
+            fi
+            case "${short}" in
+              *[!0-9a-f]*|"")
+                echo "git short SHA is not lowercase hex" >&2
+                exit 1
+                ;;
+            esac
+            if [ "${#short}" -ne 12 ]; then
+              echo "git short SHA must be 12 hex characters, found ${short}" >&2
+              exit 1
+            fi
+            case "${head}" in
+              "${short}"*) ;;
+              *)
+                echo "git short SHA ${short} does not match HEAD" >&2
+                exit 1
+                ;;
+            esac
+            commit="${head}"
             (
               cd "${outdir}"
               sha256sum "$(basename "${qcow}")" > "$(basename "${qcow}").sha256"
@@ -159,8 +187,9 @@ jobs:
               exit 1
             fi
             size="$(stat -c %s "${qcow}")"
-            printf 'attempt: %s\nbuild_number: %s\nsize: %s\ndigest: sha256:%s\n' \
-              "${attempt}" "${CIRCLE_BUILD_NUM}" "${size}" "${digest}" \
+            artifact="nvke-node-image-ubuntu24-arm64-${short}.qcow2"
+            printf 'attempt: %s\nbuild_number: %s\ncommit: %s\nartifact: %s\nsize: %s\ndigest: sha256:%s\n' \
+              "${attempt}" "${CIRCLE_BUILD_NUM}" "${commit}" "${artifact}" "${size}" "${digest}" \
               > "${outdir}/build-info.txt"
             test -f ".nvkr/runs/${attempt}/lifecycle.json"
       - run:
