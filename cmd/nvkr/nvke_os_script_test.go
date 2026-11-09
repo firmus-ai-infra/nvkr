@@ -11,12 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/canonical"
 	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/catalog"
+	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/definition"
 	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/factory"
 	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/ir"
 )
@@ -530,6 +533,7 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 				if err := json.Unmarshal(planRaw, &plan); err != nil {
 					t.Fatal(err)
 				}
+				assertOSBootstrapImageAccess(t, &plan)
 				build := plan.Builds[0]
 				rootRaw, err := runOSPlanQuery(t, planRaw, "disk_root")
 				if err != nil {
@@ -638,6 +642,67 @@ func TestOSBootstrapHarborRequiresLocalTrustCA(t *testing.T) {
 // syntheticTrustCA is a PEM-shaped placeholder; it is not a real certificate.
 func syntheticTrustCA(label string) string {
 	return "-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDLVRFU1QtQ0EtCg" + label + "==\n-----END CERTIFICATE-----\n"
+}
+
+// Read expected consumers from producer IR and utility instructions, rather
+// than duplicating the Environment's roots or the access inventory's traversal.
+func assertOSBootstrapImageAccess(t *testing.T, plan *factory.Plan) {
+	t.Helper()
+	type subject struct{ role, image string }
+	want := map[string]subject{}
+	for _, build := range plan.Builds {
+		for _, node := range build.Graph.Nodes {
+			switch {
+			case node.Kind == ir.KindBuild && node.Toolchain != "":
+				want[build.Name+"/"+node.ID] = subject{"producer", node.Toolchain}
+			case node.Kind == ir.KindFetch && node.VendorImage != "":
+				want[build.Name+"/"+node.ID] = subject{"vendor", node.VendorImage}
+			}
+		}
+	}
+	for _, node := range plan.Graph.Nodes {
+		if node.IRNode != "" || node.Container == "" {
+			continue
+		}
+		role := "utility"
+		if node.Kind == factory.NodeSBOM {
+			role = "inspector"
+		}
+		want[node.ID] = subject{role, node.Container}
+	}
+	uses, err := plan.ImageUses("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]subject{}
+	roles := map[string]int{}
+	for _, use := range uses {
+		if _, duplicate := got[use.ConsumerID]; duplicate {
+			t.Fatalf("duplicate image consumer %q", use.ConsumerID)
+		}
+		got[use.ConsumerID] = subject{use.Role, use.Reference}
+		roles[use.Role]++
+		route := factory.ImageAnonymous
+		if canonical.IsDigest(use.Reference) {
+			route = factory.ImageMeasuredLocal
+		}
+		if use.Route != route || use.Reader != (definition.ToolchainReader{}) {
+			t.Fatalf("OS bootstrap changed local/anonymous access: %+v", use)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("image inventory differs from producer IR and utility instructions: got %v, want %v", got, want)
+	}
+	for _, role := range []string{"producer", "vendor", "utility"} {
+		if roles[role] == 0 {
+			t.Errorf("OS bootstrap did not exercise %s image access", role)
+		}
+	}
+	// These build-only disk selections deliberately omit SBOM inspection; do not
+	// turn the adapter regression into a publication or qualification selection.
+	if roles["inspector"] != 0 {
+		t.Fatal("build-only OS bootstrap unexpectedly selected an inspector")
+	}
 }
 
 func writeOSBootstrapFixture(t *testing.T, root, path, contents string) {

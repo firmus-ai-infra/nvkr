@@ -357,10 +357,18 @@ disk producer's full material closure.
 Environment `toolchainAccess` declares transport access separately from publication. Its sorted
 `privateRoots` and `publicRoots` contain explicit registry/repository paths, with no overlap or trailing
 slash; at most 128 roots are admitted. Each root matches its repository and path-component descendants.
-Every digest-pinned execution image selected by a native ARC Plan, including source preparation on
-hosted runners and selected strict disk inspection, must match exactly one class. Unclassified images
+Every digest-pinned execution image selected by a GitHub Plan, including producer and vendor images,
+utility operations, strict disk inspection, startup containers and services, must match exactly one class.
+The owning inventory derives consumers from producer IR and utility instructions before renderer job
+grouping. Local image IDs and native bundle digests are separate sources, never registry references.
+Standalone CLI diagnostics classify their selected registry image through the same classifier and require
+an anonymous route, or retain a measured local image ID; private diagnostic materialization is deferred. Unclassified images
 fail generation and helper admission with a coded capability error before output or pulls. Public roots
 select anonymous pulls; they do not prove registry visibility. Private roots currently admit only GHCR.
+Ordinary in-process operation helpers keep shared capability checks but select local image semantics unless the
+Environment declares an explicit hosted route. Local IDs remain local; registry consumers still require
+classification. The inventory supplies route descriptions, never proof of local image availability.
+Runtime admission below owns the process-local prepared-image receipt.
 
 The optional `reader` declares one `credentialRef: github:SECRET_NAME` and
 `usernameRef: github:VARIABLE_NAME` for the private roots. A selected private root requires this reader
@@ -368,22 +376,66 @@ and the admitted `native-kvm-v1` route. Ambient `GITHUB_*` references are refuse
 also rejects reader reuse of the publication credential or either fixed production/development writer
 reference, comparing names case-insensitively; it does not establish the grants of other secrets. Publication prefixes,
 development mode and build-only mode grant no image access. Private toolchains use a separate preparation
-step with `contents: read` and no workflow package scope. Only that step receives the declared secret and
+step with `contents: read` and no workflow package scope. Only preparation and the manifest preflight below receive the declared secret and
 account variable; foreign owners and lookalike paths outside the declared roots receive no reader.
 Maintained Environments declare `ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains` and the independent
 `NVKR_REGISTRY_READ` / `NVKR_REGISTRY_READ_USER` references. Adding an output namespace requires no
 code allowlist or security-test enrollment. The access declaration changes Environment/Plan identity,
-not logical Build identity; existing native Environments must declare their complete selected image roots
-before regeneration. General private registry support remains deferred.
+not logical Build identity; existing GitHub Environments, including ordinary hosted configurations, must
+declare their complete selected image roots before regeneration. Private startup containers/services and
+private ordinary hosted execution remain refused before output. General private registry support remains deferred.
+
+Environment `runtime.imageLocations` maps exact source repositories to explicit registry repositories for
+build and vendor consumers, retaining each immutable content digest. The reserved `mirror.invalid/<key>`
+source requires a binding; missing keys fail compilation. Legacy bare `nvkr-toolchain-*` sources also require
+an explicit binding, and `runtime.toolchainRegistry` is refused with migration guidance. Neither a basename
+nor publication namespace selects relocation. Measured local IDs and native bundle digests bypass registry
+relocation. The authored maintained generation inventory is checked against discovered committed Plans and
+manifests; new maintained bundles must join that same access and per-job preparation contract.
 The entry workflow binds both values as explicit composite inputs; composite metadata does not evaluate
 caller-only `vars` or `secrets` contexts. Calls without image preparation omit both inputs, whose empty
 defaults are admitted only with the absent image role. The helper admits the complete Plan,
 native platform and disk host requirements before pulling; it uses a private temporary Docker
 configuration and deletes it on success or failure before source or producer execution.
-Held runtime observation accepts an already-local exact repository digest, rejects a present
-but mismatched record, and pulls only after a failed local lookup. Image/platform/tool-byte
-admission remains required. No registry credential is forwarded into producer containers.
+One pipeline-owned image admission path accepts an already-local exact repository subject and checks
+its platform and local config ID. The config ID and registry manifest digest remain distinct. Only an
+explicit anonymous route can pull after a failed local lookup, within a ten-minute admission bound.
+Private and measured-local consumers never pull: an unavailable private image requires a new invocation
+of the separately credential-bearing preparation step. Present mismatched or ambiguous metadata fails
+without retry. A process-local prepared-image receipt binds subject, platform, config ID and observed
+runtime identity; it grants neither qualification nor provider authority. Factory utility and ordinary
+producer launches reauthenticate locally through this owner and use `--pull=never`. Held source and
+qualified observers retain their held executable/daemon authentication while using the same image
+admission logic. No registry credential is forwarded into producer containers.
 The package owner grants the reader account access without granting the source repository Actions access.
+
+For Plans with declared toolchain access, generated support jobs observe exact image manifests after
+all runner bootstraps have validated or refreshed the runtime Plan. Each selected runner placement
+gets its own probe job, including native ARC placements under their protected Environment. Producer
+jobs require successful preflight; completion-scheduled verification also retains explicit preflight
+success predicates through dependency reduction and reusable worker projection. Probe jobs load the
+delivered final Plan, never a separately authored image list. The current selection covers projected
+execution images and strict disk inspectors; the complete cross-owner image-use inventory remains a
+separate capability. Explicitly public job/service startup images may be probed; private startup
+images have no admitted provider startup credential route and fail before bundle output.
+
+Probes deduplicate registry/repository/digest, platform, credential route and placement. Anonymous
+access requires a public route; private requests use only the declared reader. The operation bounds
+itself to two minutes, ten seconds per HTTP request, four joined workers, 4 MiB per manifest/config
+and 64 KiB per token response. At most one retry follows a transient transport, rate-limit or service
+failure; authorization and missing-object failures are not retried. HEAD admits an exact bounded GET
+fallback for unsupported HEAD, and GET additionally checks exact bytes and platform membership.
+An index must select exactly one matching image child. The exact image config establishes platform;
+no layers are downloaded. Config CDN redirects remain bounded, HTTPS-only and free of reader
+credentials. Challenge exchanges request only repository pull scope; foreign reader realms and
+scope escalation fail closed. Errors omit credentials, token URLs and response bodies.
+
+Sorted observations bind the final Plan digest, image and selected manifest, platform, route,
+placement and observation time. They describe point-in-time metadata availability, not continuing
+grants, layer availability, runtime acceptance, qualification or release authority. Per-job pulls,
+byte/platform checks and credential destruction remain mandatory. Local registry fixtures establish
+protocol and scheduling contracts only; fresh-runner reader exercises for each admitted placement
+class remain separate external acceptance evidence.
 
 Each generated native disk producer first prepares access to the fixed `/dev/kvm` path, before checkout,
 helper downloads or input restoration. The credential-free, one-minute step rejects a missing device,
@@ -468,8 +520,9 @@ platform route. Each configured native job checks its realized kernel OS/archite
 helper use. Bootstrap builds a separate static Linux helper with explicit `GOOS`/`GOARCH` for each route;
 transport pairs each job with that route's helper. The execution entrypoint checks its own native helper
 platform against the exact Plan before work. Before build execution, the pipeline owner checks the
-actual Docker/Podman daemon platform, pulls the pinned toolchain for the selected platform, and verifies its
-reported image platform and manifest identity. Failed platform-admission pulls capture at most 1 MiB of
+actual Docker/Podman daemon platform and admits the selected image through the shared local-first
+owner and its explicit materialization route. It verifies image platform, manifest subject and local
+config identity. Failed platform-admission pulls capture at most 1 MiB of
 stderr and report only a fixed diagnostic category; raw registry messages, URLs and credentials are not
 included. Overflow and unrecognized responses remain distinct diagnostic categories. Cancellation takes
 precedence, and classification does not retry a pull or relax admission. Held source vendoring separately checks its daemon against

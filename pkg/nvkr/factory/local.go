@@ -682,7 +682,8 @@ func admitLocalPlanBase(ctx context.Context, plan *Plan) error {
 		return e.New(e.CodeEngineCapability,
 			"local execution does not support Environment.sourceAccess authentication")
 	}
-	return nil
+	_, err := plan.imageUses("local")
+	return err
 }
 
 func admitLocalRunners(ctx context.Context, plan *Plan, options LocalRunOptions, platforms []string) error {
@@ -924,8 +925,12 @@ func launchLocalUtility(ctx context.Context, plan *Plan, node Node, options Loca
 			return err
 		}
 	}
+	access, err := plan.runtimeImageAccess(node, "local")
+	if err != nil {
+		return err
+	}
 	return executeUtilityNode(ctx, node, utilityRunnerLocation{
-		runtime: options.Runtime, mountSource: workspace, mountTarget: "/workspace/.nvkr/factory",
+		runtime: options.Runtime, imageAccess: access, mountSource: workspace, mountTarget: "/workspace/.nvkr/factory",
 		helper: containerRunner, plan: "/workspace/.nvkr/factory/" + localPlanPath, planDigest: planDigest,
 		user: localContainerUser(), home: true,
 	}, options.Stdout, options.Stderr)

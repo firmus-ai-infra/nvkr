@@ -75,6 +75,8 @@ func compositeLifecycleFixture(t *testing.T, mutate func(*definition.Environment
 	}
 	writeCompositeTestDocument(t, compositeTestPath, composite)
 	environment := Environment{APIVersion: EnvironmentAPIVersion, Kind: EnvironmentKind, Metadata: Metadata{Name: "fixture"},
+		ToolchainAccess:  &ToolchainAccess{PublicRoots: []string{"docker.io/library/golang", "example.test/toolchains"}},
+		Runtime:          Runtime{ImageLocations: map[string]string{"nvkr-toolchain-go": "example.test/toolchains/go", "nvkr-toolchain-cgo": "example.test/toolchains/cgo"}},
 		UtilityContainer: compositeTestUtil, UtilityPlatform: "linux/amd64"}
 	if mutate != nil {
 		mutate(&environment)
@@ -157,9 +159,8 @@ func TestCompositeHostedFinalizeAdmitsComposite(t *testing.T) {
 	}
 }
 
-// TestCompositeHostedFinalizeHandoffRefusesComposite keeps composite
-// qualification deferred (ADR-26 §7): with an admitted producer context the
-// handoff wrapper still refuses a composite and writes no Run or handoff.
+// TestCompositeHostedFinalizeHandoffRefusesComposite preserves admission for
+// an unsigned composite: source context alone cannot authorize a handoff.
 func TestCompositeHostedFinalizeHandoffRefusesComposite(t *testing.T) {
 	compositeLifecycleFixture(t, nil)
 	for key, value := range qualificationProducerEnvironment() {

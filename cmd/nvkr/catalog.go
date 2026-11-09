@@ -68,6 +68,9 @@ func cmdCatalog() *cli.Command {
 					&cli.StringSliceFlag{Name: "overlay", Usage: "ordered catalog overlay applied before the snapshot digest is printed (repeatable)"},
 				},
 				Action: func(c *cli.Context) error {
+					if err := rejectUnusedArguments(c, "data"); err != nil {
+						return err
+					}
 					view, err := selectCommandPresentation(c)
 					if err != nil {
 						return err
@@ -94,6 +97,9 @@ func cmdCatalog() *cli.Command {
 				Usage: "load and fail-closed-validate a catalog",
 				Flags: []cli.Flag{&cli.StringFlag{Name: "data", Required: true, Usage: "path to the catalog directory"}},
 				Action: func(c *cli.Context) error {
+					if err := rejectUnusedArguments(c, "data"); err != nil {
+						return err
+					}
 					view, err := selectCommandPresentation(c)
 					if err != nil {
 						return err
@@ -114,6 +120,9 @@ func cmdCatalog() *cli.Command {
 				Usage: "list components",
 				Flags: []cli.Flag{&cli.StringFlag{Name: "data", Required: true, Usage: "path to the catalog directory"}},
 				Action: func(c *cli.Context) error {
+					if err := rejectUnusedArguments(c, "data"); err != nil {
+						return err
+					}
 					view, err := selectCommandPresentation(c)
 					if err != nil {
 						return err
