@@ -14,7 +14,9 @@ Usage: scripts/nvke-os-local-harbor.sh ATTEMPT [JOBS]
 Build the locked local toolchain, freeze the exact authored recipe under
 .nvkr/inputs/ATTEMPT, and execute one local non-FDE NVKE OS build on native Linux
 with Docker and KVM. Docker Hub image references the host daemon pulls are
-rewritten to harbor.cbr01.in.firmus.co/dockerhub. The OVN image's Ubuntu base
+rewritten to harbor.cbr01.in.firmus.co/dockerhub, as are the Environment's bare
+toolchainAccess.publicRoots entries: the rewritten images are admitted only when
+their registry root is allowed too. The OVN image's Ubuntu base
 (UBUNTU_BASE_IMAGE, or the pinned BASE_IMAGE for Ubuntu 24.04)
 stays on Docker Hub because nested BuildKit does not use the host certificate
 store. The toolchain image is built to trust the host CAs in
@@ -36,12 +38,17 @@ path, registry, ubuntu_digest = sys.argv[1], sys.argv[2], sys.argv[3]
 file = pathlib.Path(path)
 text = file.read_text()
 updated = text
+# The first two rules also cover the digest-pinned forms, so they rewrite both
+# an image reference and a bare toolchainAccess.publicRoots entry. The bare
+# buildkit rule needs the lookbehind: as a plain substring it would match again
+# inside the text the docker.io rule just produced and prefix the registry twice.
 for old, new in (
-    ("docker.io/library/golang@sha256:", f"{registry}/library/golang@sha256:"),
-    ("moby/buildkit@sha256:", f"{registry}/moby/buildkit@sha256:"),
+    ("docker.io/library/golang", f"{registry}/library/golang"),
+    ("docker.io/moby/buildkit", f"{registry}/moby/buildkit"),
+    (re.compile(r"(?<![\w./-])moby/buildkit@sha256:"), f"{registry}/moby/buildkit@sha256:"),
     ("utilityContainer: golang@sha256:", f"utilityContainer: {registry}/library/golang@sha256:"),
 ):
-    updated = updated.replace(old, new)
+    updated = old.sub(new, updated) if isinstance(old, re.Pattern) else updated.replace(old, new)
 # Nested BuildKit fetches this base itself. The host Docker CA store does not
 # apply there, so this one pin stays on Docker Hub.
 allowed = (
