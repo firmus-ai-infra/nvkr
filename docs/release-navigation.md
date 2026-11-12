@@ -109,6 +109,22 @@ metadata or missing evidence. Payload integrity remains outside browsing's scope
 Shared evidence keeps its complete list of output memberships in text and JSON even when only one output is
 shown. Evidence references identify the exact manifest under the derived owning output repository.
 
+## Filter by kind and platform
+
+```sh
+bin/nvkr release browse --reference "$RELEASE_REF" --kind oci --platform linux/arm64
+```
+
+`--kind` takes one exact output kind (`apt-repository`, `bundle-oci`, `debian-package`, `disk-image`,
+`executable`, `helm-oci` or `oci`). `--platform` takes one exact supported `OS/ARCH`. Filters intersect with
+each other and with `--output`; an exact name that does not satisfy the filters fails instead of being dropped.
+A native output matches its recorded platform. An aggregate OCI image matches when it contains a child for the
+platform and is still shown whole, with every child. Outputs without platform metadata, such as most charts,
+never match a platform filter. Like `--output`, filters apply only after the complete metadata closure has
+been checked, keep the original output total and the complete membership of shared evidence, and work with
+`--layout`. JSON records the filters in `selectedKind` and `selectedPlatform`. A filter that matches nothing
+fails with a coded usage error; it does not mean the release is empty.
+
 ## Pull an output
 
 Choose an exact output name from `release browse` and an explicit new destination directory:
@@ -194,7 +210,7 @@ Stable ordering makes comparisons repeatable; the JSON bytes still do not define
 | `referenceScope` | Locators derive from the supplied root reference; availability is not established |
 | `declaredQualification` | Publisher-declared qualification, separate from this inspection's result |
 | `inspection`, `inspectionDetails` | Human-readable inspection scope and explicit machine-readable checks |
-| `totalOutputs`, optional `selectedOutput` | Complete publication output count and any browse-only selection |
+| `totalOutputs`, optional `selectedOutput`, `selectedKind`, `selectedPlatform` | Complete publication output count and any browse-only selection or filters |
 | `metadata` | Recorded Definition, Environment, Plan and content identities, with invocation ID when present |
 | `outputs` | Every named artifact's exact kind, digest, reference, Build Digest, components and kind-specific metadata |
 | `evidence` | Exact evidence references/digests, output/component/stage/subject bindings and available source descriptions |
@@ -265,7 +281,9 @@ readability; its serialized bytes are not a canonical identity document or a ver
 The Mermaid diagram shows release membership, output components, and evidence-to-output and evidence-to-subject
 relationships. It abbreviates digest labels for readability; use text or JSON for exact locators. This is the
 published artifact/evidence graph. It does not reconstruct build ordering or claim relationships absent from
-the publication metadata. Registry-provided labels are escaped before rendering.
+the publication metadata. Registry-provided labels are escaped before rendering. A filtered diagram names the
+output count and each active selection in its root node (for example `outputs 1 of 6 | kind executable`), so a
+partial view is not mistaken for the whole Release.
 
 ## Inspect a local layout
 
@@ -281,6 +299,28 @@ the artifacts. Text explicitly labels artifact/evidence locators as derived, and
 makes no registry-availability claim in either acquisition mode. Registry and workspace flags cannot be combined
 with `--layout`. The existing `release inspect --reference … --layout …`
 continues to return its compact artifact array.
+
+## Compare two releases
+
+```sh
+bin/nvkr release diff --before "$OLD_RELEASE_REF" --after "$RELEASE_REF"
+bin/nvkr release diff --before "$OLD_RELEASE_REF" --after "$RELEASE_REF" --format json --exit-code
+```
+
+`release diff` checks the complete metadata closure of both pinned references with the same bounded inspector
+as browsing, then compares their artifact inventories. Outputs are matched by exact name; two outputs with
+equal Build Digests but different names are reported as one removed and one added. Each changed output names
+its changed fields (such as `digest`, `os`/`arch`, `chartVersion` or `imageIndex`) and carries its complete
+before and after description. A change to the derived artifact reference alone is marked `referenceOnly`, so
+moving a release to another repository is never reported as changed payload digests.
+
+This is an artifact-inventory comparison only. Evidence documents, signatures, policy acceptance and deployment
+compatibility are not compared or established; the JSON `notCompared` field says so explicitly. Both sides
+must inspect successfully: malformed metadata or an unpinned reference on either side returns its coded error
+and no comparison. The command exits 0 whether or not the inventories differ; with `--exit-code` it exits 3
+when they differ, following `run diff`. `--timeout` bounds both inspections together.
+`--before-layout` and `--after-layout` read either side from a local OCI layout. Registry and workspace flags
+apply only to a side read from the registry. No artifact payload layers are fetched.
 
 ## Apply a verification policy separately
 
