@@ -5,6 +5,7 @@ package lifecycle
 
 import (
 	"context"
+	"strings"
 
 	e "github.com/dsx-ai-factory/nvkr/pkg/nvkr/errors"
 	"github.com/dsx-ai-factory/nvkr/pkg/nvkr/factory"
@@ -54,6 +55,11 @@ func generateFiles(ctx context.Context, definitionPath, environmentPath, generat
 	if err != nil {
 		return "", err
 	}
+	if strings.EqualFold(strings.TrimSpace(engine), factory.EngineTekton) {
+		if err := ValidateTektonPlan(plan); err != nil {
+			return "", err
+		}
+	}
 	if len(sourceCommit) != 0 {
 		if len(sourceCommit) != 1 || !runtimePlan || engine != factory.EngineGitHub {
 			return "", e.New(e.CodeUsage, "exact source selection requires one GitHub runtime source commit")
@@ -69,6 +75,12 @@ func generateFiles(ctx context.Context, definitionPath, environmentPath, generat
 		}
 	}
 	if runtimePlan {
+		if len(plan.Environment.GitHubRuntimeSources) != 0 && !check {
+			plan, err = factory.FreezeRuntimeSources(ctx, root, definitionPath, environmentPath, generatorVersion)
+			if err != nil {
+				return "", err
+			}
+		}
 		if err := factory.PrepareGitHubRuntimeBundle(ctx, plan, root, check); err != nil {
 			return "", err
 		}

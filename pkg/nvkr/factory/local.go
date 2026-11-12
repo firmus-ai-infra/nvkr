@@ -654,8 +654,14 @@ func admitLocalPlanBase(ctx context.Context, plan *Plan) error {
 	if plan == nil {
 		return e.New(e.CodeUsage, "local execution requires a plan")
 	}
+	if plan.Environment.Tekton != nil {
+		return e.New(e.CodeEngineCapability, "Tekton execution policy requires authenticated cluster execution")
+	}
 	if err := plan.Validate(); err != nil {
 		return err
+	}
+	if len(plan.Environment.GitHubRuntimeSources) != 0 {
+		return e.New(e.CodeEngineCapability, "dispatch-frozen sources require GitHub execution")
 	}
 	if err := rejectUnsupportedRuntimeStorage(plan, "local factory execution"); err != nil {
 		return err

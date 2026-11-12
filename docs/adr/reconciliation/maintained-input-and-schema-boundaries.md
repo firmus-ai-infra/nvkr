@@ -41,8 +41,8 @@ The maintained release node-image catalog selects the NVIDIA OVN fork `v2.4.2`
 `nvke-cni-ovn-{charts,images}-2.4.2`, which NVKE `v0.23.0` still requests for its default tenant `cniVersion`.
 The native NVIDIA overlay now leaves the release snapshot unchanged. Dependent overlay predecessor
 digests and generated bundles were regenerated, and the upstream 1.4.0 demo overlays still replace all
-three producers. The release, development, disks, diagnostics and Ubuntu 24 Environments grant the
-fork source access through `NKE_SOURCE_TOKEN`. Catalog validation, Plan generation and contract tests
+three producers. The release, development, disks, diagnostics and Ubuntu 24 Environments fetch the
+public fork anonymously. Catalog validation, Plan generation and contract tests
 cover this selection. No hosted or local disk build, package-index inspection or default-version tenant
 OVN create has exercised it.
 
@@ -167,7 +167,10 @@ scanner acceptance or complete production input approval. The
 The maintained release and native demo inputs now select the same stock NVKE `v0.23.0`
 source, `2cfd00081b468d85a4894ec17e9deac13c9d8169`, for OS assembly, agent, Calico,
 kubeadm, SPIRE packaging and DOCA OVS acquisition, including the renamed Packer targets, disk filenames,
-material schema and required Ubuntu-series input. SPIRE uses that release's revision-4
+material schema and required Ubuntu-series input. NVKE telemetry pipelines is packaged from its own repository,
+`dsx-ai-factory/nvke-telemetry-pipeline`, at `nktp/v0.1.0`, the release that `v0.23.0`'s site values target.
+The native installer bundle still installs `v0.23.0`'s in-tree chart until NVKR selects an NVKE release without it
+([#465](https://github.com/dsx-ai-factory/nvkr/issues/465)). SPIRE uses that release's revision-4
 package and source-owned public acquisition/packaging commands; no pre-DSX source
 rollback is selected. The default package's removal of DSX IMDS is an upstream release
 contract, not a missing private dependency waived by NVKR. Historical DSX source,

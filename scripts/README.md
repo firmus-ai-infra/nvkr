@@ -18,6 +18,11 @@ The launcher runs in a child shell, so failure does not change the caller's SSH 
 
 ## Repository CI tests
 
+`test-tekton-kind.sh` runs the native AMD64 core Definition in an owned kind cluster with pinned Tekton
+and an in-cluster registry. The [Tekton guide](../docs/generate-pipeline.md#tekton-cluster-execution)
+lists prerequisites, trust scope and retained evidence. The GitHub acceptance workflow runs this same
+command; it needs no publishing secrets. This explicit integration test fails when prerequisites are absent.
+
 `ci-test-shard.py` discovers the ordinary Go suite and partitions it across the Merge Gate's eleven
 test jobs. It includes examples and fuzz seed tests, and requires exact completion of the discovered
 selection. New packages and tests need no allowlist update. `make test-shard` reproduces one matrix
@@ -85,7 +90,7 @@ documented installed prerequisites before invoking NVKR. No Colima execution hos
 `nvke-full-arm64-local.sh ATTEMPT JOBS LANE` also supports
 [focused selections](../inputs/definitions/demo/README.md);
 `--check LANE` performs diagnostics only. The full demo compiles binaries once and shares
-one measured Packer toolchain, including Helm 4.2.4 and ORAS 1.3.3. Profiles are
+one measured Packer toolchain, including Helm 4.3.1 and ORAS 1.3.6. Profiles are
 data bundles, not a separate container image. No publication/signing is enabled.
 The launcher prints its exact shell-escaped `nvkr` invocations to stderr before execution, without printing environment values.
 
