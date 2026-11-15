@@ -7,7 +7,7 @@ kind: CatalogFragment
 sources:
   nvke-os:
     repo: https://github.com/firmus-ai-infra/nvke.git
-    constraint: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    constraint: a671e80521665ae78b46fa56894107c55f582787
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -41,7 +41,7 @@ sources:
       }
   nvke-cni-calico-source:
     repo: https://github.com/firmus-ai-infra/nvke.git
-    constraint: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    constraint: a671e80521665ae78b46fa56894107c55f582787
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -53,7 +53,7 @@ sources:
         ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
   nvke-kubeadm-distro-source:
     repo: https://github.com/firmus-ai-infra/nvke.git
-    constraint: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    constraint: a671e80521665ae78b46fa56894107c55f582787
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -72,7 +72,7 @@ sources:
       cp -a "$bundle_root/dist" os-image/packages/kubeadm-distro/dist
   nvke-spire-agent-source:
     repo: https://github.com/firmus-ai-infra/nvke.git
-    constraint: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    constraint: a671e80521665ae78b46fa56894107c55f582787
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -84,7 +84,7 @@ sources:
         ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
   nvke-doca-ovs-source:
     repo: https://github.com/firmus-ai-infra/nvke.git
-    constraint: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    constraint: a671e80521665ae78b46fa56894107c55f582787
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
