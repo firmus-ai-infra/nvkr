@@ -277,18 +277,18 @@ jobs:
                   printf '%s\n' "${image}" > ".nvkr/evidence/${NVKR_ATTEMPT}/toolchain-arm64.image-id"
                   nvke_repo="$(jq -er '
                     [.builds[].executionGraph.nodes[] |
-                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")))] |
-                    if length > 0 and all(.[]; .repo == .[0].repo) then .[0].repo else error("missing or inconsistent nvke repo") end
+                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")))] as $nodes |
+                    if ($nodes | length) > 0 and all($nodes[]; .repo == $nodes[0].repo) then $nodes[0].repo else error("missing or inconsistent nvke repo") end
                   ' "${plan}")"
-                  nvke_commit="$(jq -er '
+                  nvke_commit="$(jq -er --arg r "${nvke_repo}" '
                     [.builds[].executionGraph.nodes[] |
-                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")))] |
-                    if length > 0 then .[0].commit else error("missing nvke fetch node") end
+                      select(.kind == "fetch" and .repo == $r)] as $nodes |
+                    if ($nodes | length) > 0 and all($nodes[]; .commit == $nodes[0].commit) then $nodes[0].commit else error("missing or inconsistent nvke commit") end
                   ' "${plan}")"
-                  nvke_tree="$(jq -er --arg c "${nvke_commit}" '
+                  nvke_tree="$(jq -er --arg r "${nvke_repo}" --arg c "${nvke_commit}" '
                     [.builds[].executionGraph.nodes[] |
-                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")) and .commit == $c)] |
-                    if length > 0 and all(.[]; .treeHash == .[0].treeHash) then .[0].treeHash else error("inconsistent nvke treeHash") end
+                      select(.kind == "fetch" and .repo == $r and .commit == $c)] as $nodes |
+                    if ($nodes | length) > 0 and all($nodes[]; .treeHash == $nodes[0].treeHash) then $nodes[0].treeHash else error("inconsistent nvke treeHash") end
                   ' "${plan}")"
                   smoke_src=".nvkr/boot-smoke-src/${NVKR_ATTEMPT}"
                   mkdir -p "${smoke_src}"
