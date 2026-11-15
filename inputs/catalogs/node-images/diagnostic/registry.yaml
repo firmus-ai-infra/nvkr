@@ -287,4 +287,4 @@ imports:
     ubuntu-installer-iso: ubuntu-installer-iso
     ubuntu-installer-iso-amd64: ubuntu-installer-iso-amd64
   path: "../../shared/node-images.yaml"
-  sha256: 9c9730dba678e8717eea23d09a3125f0f164662ad2b5f8354a606c02cb17cbf8
+  sha256: 6c8b65e7b1798f8185c5893b80b240878e4cf2ce627004d4036d91d8634e587a

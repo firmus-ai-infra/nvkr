@@ -12,30 +12,30 @@ artifacts:
 kind: PinLock
 pins:
   nvke-cni-calico-source:
-    commit: a671e80521665ae78b46fa56894107c55f582787
-    sourceDateEpoch: 1794738791
-    tag: a671e80521665ae78b46fa56894107c55f582787
-    treeHash: 5dbad4ebb12f9717b554a2dcdce407354a72fee4
+    commit: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    sourceDateEpoch: 1794778909
+    tag: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    treeHash: da613f3ee3fec7949cb3766135a8b51849273697
   nvke-doca-ovs-source:
-    commit: a671e80521665ae78b46fa56894107c55f582787
-    sourceDateEpoch: 1794738791
-    tag: a671e80521665ae78b46fa56894107c55f582787
-    treeHash: 5dbad4ebb12f9717b554a2dcdce407354a72fee4
+    commit: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    sourceDateEpoch: 1794778909
+    tag: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    treeHash: da613f3ee3fec7949cb3766135a8b51849273697
   nvke-kubeadm-distro-source:
-    commit: a671e80521665ae78b46fa56894107c55f582787
-    sourceDateEpoch: 1794738791
-    tag: a671e80521665ae78b46fa56894107c55f582787
-    treeHash: 5dbad4ebb12f9717b554a2dcdce407354a72fee4
+    commit: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    sourceDateEpoch: 1794778909
+    tag: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    treeHash: da613f3ee3fec7949cb3766135a8b51849273697
   nvke-os:
-    commit: a671e80521665ae78b46fa56894107c55f582787
-    sourceDateEpoch: 1794738791
-    tag: a671e80521665ae78b46fa56894107c55f582787
-    treeHash: 5dbad4ebb12f9717b554a2dcdce407354a72fee4
+    commit: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    sourceDateEpoch: 1794778909
+    tag: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    treeHash: da613f3ee3fec7949cb3766135a8b51849273697
   nvke-spire-agent-source:
-    commit: a671e80521665ae78b46fa56894107c55f582787
-    sourceDateEpoch: 1794738791
-    tag: a671e80521665ae78b46fa56894107c55f582787
-    treeHash: 5dbad4ebb12f9717b554a2dcdce407354a72fee4
+    commit: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    sourceDateEpoch: 1794778909
+    tag: 2063aa5d600aa0c1ce78f92d8447d5cebf0db484
+    treeHash: da613f3ee3fec7949cb3766135a8b51849273697
   ovn-kubernetes:
     commit: d6a3812d1bc1c36bf24c7eda0e86e9b13d84907d
     sourceDateEpoch: 1788540677
