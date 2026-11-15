@@ -12,30 +12,30 @@ artifacts:
 kind: PinLock
 pins:
   nvke-cni-calico-source:
-    commit: 2cfd00081b468d85a4894ec17e9deac13c9d8169
-    sourceDateEpoch: 1793236039
-    tag: v0.23.0
-    treeHash: a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53
+    commit: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    sourceDateEpoch: 1794737543
+    tag: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    treeHash: bf91326225947e767936176e8fffaccef14eb01b
   nvke-doca-ovs-source:
-    commit: 2cfd00081b468d85a4894ec17e9deac13c9d8169
-    sourceDateEpoch: 1793236039
-    tag: v0.23.0
-    treeHash: a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53
+    commit: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    sourceDateEpoch: 1794737543
+    tag: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    treeHash: bf91326225947e767936176e8fffaccef14eb01b
   nvke-kubeadm-distro-source:
-    commit: 2cfd00081b468d85a4894ec17e9deac13c9d8169
-    sourceDateEpoch: 1793236039
-    tag: v0.23.0
-    treeHash: a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53
+    commit: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    sourceDateEpoch: 1794737543
+    tag: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    treeHash: bf91326225947e767936176e8fffaccef14eb01b
   nvke-os:
-    commit: 2cfd00081b468d85a4894ec17e9deac13c9d8169
-    sourceDateEpoch: 1793236039
-    tag: v0.23.0
-    treeHash: a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53
+    commit: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    sourceDateEpoch: 1794737543
+    tag: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    treeHash: bf91326225947e767936176e8fffaccef14eb01b
   nvke-spire-agent-source:
-    commit: 2cfd00081b468d85a4894ec17e9deac13c9d8169
-    sourceDateEpoch: 1793236039
-    tag: v0.23.0
-    treeHash: a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53
+    commit: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    sourceDateEpoch: 1794737543
+    tag: fe29f35c6ec9eb65ec25750c28b39fa92446e6ff
+    treeHash: bf91326225947e767936176e8fffaccef14eb01b
   ovn-kubernetes:
     commit: d6a3812d1bc1c36bf24c7eda0e86e9b13d84907d
     sourceDateEpoch: 1788540677

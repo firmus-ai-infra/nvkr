@@ -82,8 +82,7 @@ func TestToolchainValidatedImageID(t *testing.T) {
 printf '%s\n' "$1 $2 $3" >>"$TEST_CALLS"
 case "$1 $2" in
   'buildx version'|'version --format') echo 'runtime diagnostic';;
-  'buildx inspect') echo 'Driver: docker-container';;
-  'info --format') echo '[["Backing Filesystem","extfs"]]';;
+  'buildx create'|'buildx rm') echo 'builder diagnostic';;
   'buildx build') printf 'archive\n'; exit "${TEST_BUILD_EXIT:-0}";;
   'image load') [ "$3" = --input ] && [ -f "$4" ] && [ -s "$4" ] || exit 96
     cat "$4" >/dev/null; echo 'load diagnostic';;
@@ -114,7 +113,7 @@ esac
 			cmd := exec.CommandContext(ctx, "bash", args...)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
 				"TEST_ARCH="+runtime.GOARCH, "TEST_IMAGE_ID="+tc.inspected, "TEST_EXPECTED_ID="+measured,
-				"TEST_SMOKE_EXIT="+tc.smokeExit, "TEST_BUILD_EXIT="+tc.buildExit, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=",
+				"TEST_SMOKE_EXIT="+tc.smokeExit, "TEST_BUILD_EXIT="+tc.buildExit, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=",
 				"TMPDIR="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics
@@ -239,7 +238,7 @@ func TestToolchainRejectsBootstrapGoDriftBeforeRuntime(t *testing.T) {
 				defer cancel()
 				cmd := exec.CommandContext(ctx, "bash", args...)
 				cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+filepath.Join(dir, "docker"),
-					"TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=")
+					"TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=")
 				output, err := cmd.CombinedOutput()
 				if err == nil || !strings.Contains(string(output), ".go-version") {
 					t.Fatalf("bootstrap Go drift was not diagnosed: %v:\n%s", err, output)
@@ -284,8 +283,7 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${TEST_CALLS}"
 case "$1 $2" in
   "buildx version"|"version --format") exit 0 ;;
-  "buildx inspect") echo 'Driver: docker-container' ;;
-  "info --format") echo '[["Backing Filesystem","extfs"]]' ;;
+  "buildx create"|"buildx rm") exit 0 ;;
   "buildx build")
     [[ " $* " == *" --output type=docker,dest=-,rewrite-timestamp=true "* ]]
     [[ " $* " == *" --build-arg SOURCE_DATE_EPOCH=0 "* ]]
@@ -314,7 +312,7 @@ esac
 			cmd := exec.CommandContext(ctx, "bash", "build.sh", "--arch", runtime.GOARCH)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
 				"TEST_BUILD_EXIT="+tc.buildExit, "TEST_LOAD_EXIT="+tc.loadExit, "TEST_ARCH="+runtime.GOARCH,
-				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "TMPDIR="+dir,
+				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=", "TMPDIR="+dir,
 				fmt.Sprintf("TEST_EMPTY_ARCHIVE=%t", tc.emptyArchive))
 			if tc.localInputs {
 				cmd.Env = append(cmd.Env, "NVKR_BUILD_ARCHIVES="+dir, "NVKR_BUILD_CA_BUNDLE="+fake)
@@ -406,7 +404,7 @@ func TestToolchainRejectsInvalidBuildInputsBeforeRuntime(t *testing.T) {
 				value = fake
 			}
 			cmd := exec.CommandContext(t.Context(), "bash", "build.sh", "--arch", runtime.GOARCH)
-			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", tc.key+"="+value)
+			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_MARKER="+marker, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=", tc.key+"="+value)
 			out, err := cmd.CombinedOutput()
 			if err == nil || !strings.Contains(string(out), tc.message) {
 				t.Fatalf("got %v: %s", err, out)
@@ -415,6 +413,39 @@ func TestToolchainRejectsInvalidBuildInputsBeforeRuntime(t *testing.T) {
 				t.Fatalf("runtime reached before input admission: %v", err)
 			}
 		})
+	}
+}
+
+// This source contract proves site trust reaches the final image only through
+// the build secret and the system store; it does not prove a real image build.
+func TestToolchainTrustCAIsSecretOnlyAndVerifying(t *testing.T) {
+	raw, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := string(raw)
+	final := dockerfile[strings.LastIndex(dockerfile, "\nFROM "):]
+	for _, want := range []string{
+		"ARG NVKR_TRUST_CA=none",
+		"--mount=type=secret,id=nvkr_trust_ca,mode=0444",
+		"/usr/local/share/ca-certificates/nvkr-trust-ca-%02d.crt",
+		"-ext basicConstraints | grep -q 'CA:TRUE'",
+		"update-ca-certificates;",
+	} {
+		if !strings.Contains(final, want) {
+			t.Fatalf("final image stage lacks %q", want)
+		}
+	}
+	for _, forbidden := range []string{"--insecure", "InsecureSkipVerify", "SSL_CERT_FILE", "SSL_CERT_DIR", "GIT_SSL_NO_VERIFY", "sslVerify"} {
+		if strings.Contains(dockerfile, forbidden) {
+			t.Fatalf("Dockerfile weakens or redirects TLS trust with %q", forbidden)
+		}
+	}
+	for _, line := range strings.Split(dockerfile, "\n") {
+		if (strings.HasPrefix(line, "COPY ") || strings.HasPrefix(line, "ADD ")) && strings.Contains(line, ".crt") &&
+			line != "COPY --from=download /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt" {
+			t.Fatalf("certificate copied from the build context: %s", line)
+		}
 	}
 }
 
@@ -471,8 +502,7 @@ func TestDiagnosticToolchainPinDoesNotGrantMaintainedAcceptance(t *testing.T) {
 printf '%s\n' "$*" >>"$TEST_CALLS"
 case "$1 $2" in
   'buildx version'|'version --format') exit 0 ;;
-  'buildx inspect') echo 'Driver: docker-container' ;;
-  'info --format') echo '[["Backing Filesystem","extfs"]]' ;;
+  'buildx create'|'buildx rm') exit 0 ;;
   'buildx build') printf 'archive\n' ;;
   'image load') [ "$3" = --input ] && [ -f "$4" ] && [ -s "$4" ] || exit 96 ;;
   'image inspect')
@@ -490,7 +520,7 @@ esac
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "bash", args...)
 			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
-				"TEST_ARCH="+tc.arch, "TEST_IMAGE_ID="+measured, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=")
+				"TEST_ARCH="+tc.arch, "TEST_IMAGE_ID="+measured, "NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "NVKR_TOOLCHAIN_TRUST_CA=")
 			out, err := cmd.CombinedOutput()
 			if (err != nil) != tc.wantError || !strings.Contains(string(out), tc.message) {
 				t.Fatalf("error=%v output=%s; want error=%t message=%s", err, out, tc.wantError, tc.message)
@@ -502,71 +532,6 @@ esac
 			smoke := strings.Contains(string(calls), "run --rm")
 			if smoke == tc.wantError {
 				t.Fatalf("native smoke=%t; want %t: %s", smoke, !tc.wantError, calls)
-			}
-		})
-	}
-}
-
-func TestToolchainRefusesDockerDriverWithoutContainerdStore(t *testing.T) {
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("toolchain script requires jq")
-	}
-	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
-		t.Skip("toolchain supports amd64 and arm64 hosts")
-	}
-	for _, tc := range []struct {
-		name    string
-		driver  string
-		storage string
-		refuse  bool
-	}{
-		{name: "docker driver on the classic store", driver: "docker", storage: `[["Backing Filesystem","extfs"]]`, refuse: true},
-		{name: "docker driver on the containerd store", driver: "docker", storage: `[["driver-type","io.containerd.snapshotter.v1"]]`},
-		{name: "container driver on the classic store", driver: "docker-container", storage: `[["Backing Filesystem","extfs"]]`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			log := filepath.Join(dir, "calls")
-			fake := filepath.Join(dir, "docker")
-			// A build that is admitted fails with a distinct status, so the
-			// test separates refusal from an attempted export.
-			const script = `#!/bin/sh
-printf '%s\n' "$*" >>"$TEST_CALLS"
-case "$1 $2" in
-  'buildx version'|'version --format') exit 0 ;;
-  'buildx inspect') printf 'Name: test\nDriver: %s\n' "$TEST_DRIVER" ;;
-  'info --format') [ "$TEST_DRIVER" = docker ] || exit 98; printf '%s\n' "$TEST_STORAGE" ;;
-  'buildx build') exit 42 ;;
-  *) exit 99 ;;
-esac
-`
-			if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, "bash", "build.sh", "--arch", runtime.GOARCH)
-			cmd.Env = append(os.Environ(), "CONTAINER_RUNTIME="+fake, "TEST_CALLS="+log,
-				"TEST_DRIVER="+tc.driver, "TEST_STORAGE="+tc.storage,
-				"NVKR_BUILD_ARCHIVES=", "NVKR_BUILD_CA_BUNDLE=", "TMPDIR="+dir)
-			output, err := cmd.CombinedOutput()
-			var failure *exec.ExitError
-			if !errors.As(err, &failure) {
-				t.Fatalf("build error = %v, want an exit status:\n%s", err, output)
-			}
-			calls, err := os.ReadFile(log)
-			if err != nil {
-				t.Fatal(err)
-			}
-			built := strings.Contains(string(calls), "buildx build")
-			if tc.refuse {
-				if failure.ExitCode() != 1 || built || !strings.Contains(string(output), "--driver docker-container") {
-					t.Fatalf("exit %d, build attempted %t, want refusal before building:\n%s", failure.ExitCode(), built, output)
-				}
-				return
-			}
-			if failure.ExitCode() != 42 || !built {
-				t.Fatalf("exit %d, build attempted %t, want the admitted build's own failure:\n%s", failure.ExitCode(), built, output)
 			}
 		})
 	}

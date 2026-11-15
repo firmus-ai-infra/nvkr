@@ -144,14 +144,6 @@ jobs:
             if [ "${free_mib}" -lt 92160 ]; then
               echo "warning: less than 90 GiB free before material staging" >&2
             fi
-            buildx_driver="$(docker buildx inspect | sed -n 's/^Driver:[[:space:]]*//p')"
-            driver_status="$(docker info --format '{{json .DriverStatus}}')"
-            if [ "${buildx_driver}" = "docker" ] && [[ "${driver_status}" != *io.containerd.snapshotter* ]]; then
-              if ! docker buildx inspect nvkr-toolchain >/dev/null 2>&1; then
-                docker buildx create --name nvkr-toolchain --driver docker-container >/dev/null
-              fi
-              echo 'export BUILDX_BUILDER=nvkr-toolchain' >> "${BASH_ENV}"
-            fi
 
       - when:
           condition: << pipeline.parameters.dry_run >>
@@ -225,7 +217,7 @@ jobs:
                   CONTAINER_RUNTIME=docker \
                   NVKE_OS_ARCH=arm64 \
                   NVKE_OS_UBUNTU_VERSION=24.04 \
-                  scripts/nvke-os-local.sh "${NVKR_ATTEMPT}" "<< parameters.jobs >>" \
+                  scripts/nvke-os-local-harbor.sh "${NVKR_ATTEMPT}" "<< parameters.jobs >>" \
                     2>&1 | tee ".nvkr/evidence/${NVKR_ATTEMPT}/lifecycle-arm64.log"
                   output_dir=".nvkr/runs/${NVKR_ATTEMPT}/outputs"
                   qcow="${output_dir}/nvke-node-image-ubuntu24-arm64.qcow2"
@@ -283,6 +275,11 @@ jobs:
                   observed="$(docker image inspect --format '{{.Id}}' "${image}")"
                   test "${observed}" = "${image}"
                   printf '%s\n' "${image}" > ".nvkr/evidence/${NVKR_ATTEMPT}/toolchain-arm64.image-id"
+                  nvke_repo="$(jq -er '
+                    [.builds[].executionGraph.nodes[] |
+                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")))] |
+                    if length > 0 and all(.[]; .repo == .[0].repo) then .[0].repo else error("missing or inconsistent nvke repo") end
+                  ' "${plan}")"
                   nvke_commit="$(jq -er '
                     [.builds[].executionGraph.nodes[] |
                       select(.kind == "fetch" and (.repo | endswith("/nvke.git")))] |
@@ -299,7 +296,7 @@ jobs:
                     git init -q "${smoke_src}"
                   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_TERMINAL_PROMPT=0 \
                     timeout 300 git -C "${smoke_src}" -c credential.helper= fetch --depth=1 \
-                      https://github.com/dsx-ai-factory/nvke.git "${nvke_commit}"
+                      "${nvke_repo}" "${nvke_commit}"
                   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_TERMINAL_PROMPT=0 \
                     git -C "${smoke_src}" checkout -q --detach FETCH_HEAD
                   test "$(git -C "${smoke_src}" rev-parse HEAD)" = "${nvke_commit}"

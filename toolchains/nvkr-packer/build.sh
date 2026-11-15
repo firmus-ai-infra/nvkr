@@ -101,6 +101,7 @@ jq -e '
   (.ubuntuSnapshot | type == "string" and test("^[0-9]{8}T[0-9]{6}Z$")) and
   (.baseImage | type == "string" and test("^ubuntu@sha256:[0-9a-f]{64}$")) and
   (.downloadImage | type == "string" and test("^curlimages/curl@sha256:[0-9a-f]{64}$")) and
+  (.buildkitImage | type == "string" and test("^moby/buildkit@sha256:[0-9a-f]{64}$")) and
   .validatedNVKE.commit == "726f76944404e1106626b8333d3576bdf67b575b" and
   .validatedNVKE.goVersion == "1.27.1" and
   .validatedNVKE.packerProject == "os-image/packer" and
@@ -166,7 +167,7 @@ fi
 command -v "${runtime}" >/dev/null 2>&1 || { echo "Docker is required" >&2; exit 1; }
 
 build_inputs=()
-if [[ -n "${NVKR_BUILD_ARCHIVES:-}" || -n "${NVKR_BUILD_CA_BUNDLE:-}" ]]; then
+if [[ -n "${NVKR_BUILD_ARCHIVES:-}" || -n "${NVKR_BUILD_CA_BUNDLE:-}" || -n "${NVKR_TOOLCHAIN_TRUST_CA:-}" ]]; then
   [[ "${runtime##*/}" == docker ]] || { echo 'archive/CA inputs require Docker Buildx' >&2; exit 1; }
 fi
 if [[ -n "${NVKR_BUILD_ARCHIVES:-}" ]]; then
@@ -177,11 +178,38 @@ if [[ -n "${NVKR_BUILD_CA_BUNDLE:-}" ]]; then
   [[ -f "${NVKR_BUILD_CA_BUNDLE}" ]] || { echo 'build CA bundle is not a regular file' >&2; exit 1; }
   build_inputs+=(--secret "id=nvkr_ca_bundle,src=${NVKR_BUILD_CA_BUNDLE}")
 fi
+# Site CAs the final image's system store must trust at run time, for example a
+# private registry mirror's issuing CA. Only PEM CERTIFICATE blocks are admitted,
+# so a key or another PEM type cannot be installed as trust.
+trust_ca=""
+if [[ -n "${NVKR_TOOLCHAIN_TRUST_CA:-}" ]]; then
+  [[ -f "${NVKR_TOOLCHAIN_TRUST_CA}" && -s "${NVKR_TOOLCHAIN_TRUST_CA}" ]] || {
+    echo 'toolchain trust CA is not a nonempty regular file' >&2; exit 1; }
+  if ! awk '
+    /^[[:space:]]*$/ { next }
+    $0 == "-----BEGIN CERTIFICATE-----" { if (open) { bad = 1; exit } open = 1; body = 0; certs++; next }
+    $0 == "-----END CERTIFICATE-----" { if (!open || !body) { bad = 1; exit } open = 0; next }
+    open && /^[A-Za-z0-9+\/=]+$/ { body = 1; next }
+    { bad = 1; exit }
+    END { exit (bad || open || certs == 0) }
+  ' "${NVKR_TOOLCHAIN_TRUST_CA}"; then
+    echo 'toolchain trust CA must contain only PEM CERTIFICATE blocks' >&2
+    exit 1
+  fi
+  trust_ca="$(cd "$(dirname "${NVKR_TOOLCHAIN_TRUST_CA}")" && pwd -P)/$(basename "${NVKR_TOOLCHAIN_TRUST_CA}")"
+  build_inputs+=(--secret "id=nvkr_trust_ca,src=${trust_ca}" --build-arg NVKR_TRUST_CA=required)
+fi
+buildkit_config=""
+if [[ -n "${NVKR_BUILDKIT_CONFIG:-}" ]]; then
+  [[ -f "${NVKR_BUILDKIT_CONFIG}" && ! -L "${NVKR_BUILDKIT_CONFIG}" ]] || { echo 'BuildKit config is not a regular file' >&2; exit 1; }
+  buildkit_config="${NVKR_BUILDKIT_CONFIG}"
+fi
 
 uid="$(id -u)"
 gid="$(id -g)"
 identity_dir=""
 image_archive=""
+buildkit_builder=""
 cleanup_identity() {
   local cleanup_status=0
   if [[ -n "${identity_dir}" ]]; then
@@ -202,10 +230,28 @@ cleanup_identity() {
   identity_dir=""
   image_archive=""
 }
+# Removes the private builder created for this invocation. Its BuildKit
+# container runs privileged, so removal is part of every exit path.
+cleanup_builder() {
+  if [[ -z "${buildkit_builder}" ]]; then
+    return 0
+  fi
+  if ! "${runtime}" buildx rm --force "${buildkit_builder}" >&2; then
+    echo 'could not remove private toolchain BuildKit builder' >&2
+    return 1
+  fi
+  buildkit_builder=""
+}
+cleanup_resources() {
+  local cleanup_status=0
+  cleanup_identity || cleanup_status=1
+  cleanup_builder || cleanup_status=1
+  return "${cleanup_status}"
+}
 cleanup_on_exit() {
   local exit_status=$?
   trap - EXIT
-  if ! cleanup_identity && [[ "${exit_status}" -eq 0 ]]; then
+  if ! cleanup_resources && [[ "${exit_status}" -eq 0 ]]; then
     exit_status=1
   fi
   exit "${exit_status}"
@@ -232,6 +278,36 @@ esac
 
 base_image="$(jq -r '.baseImage' "${lock}")"
 download_image="$(jq -r '.downloadImage' "${lock}")"
+# Optional caller overrides keep the locked digests and change only the registry
+# name. Unset variables leave the lock references in place.
+if [[ -n "${NVKR_PACKER_BASE_IMAGE:-}" || -n "${NVKR_PACKER_DOWNLOAD_IMAGE:-}" ]]; then
+  if [[ -z "${NVKR_PACKER_BASE_IMAGE:-}" || -z "${NVKR_PACKER_DOWNLOAD_IMAGE:-}" ]]; then
+    echo "NVKR_PACKER_BASE_IMAGE and NVKR_PACKER_DOWNLOAD_IMAGE must be set together" >&2
+    exit 1
+  fi
+  digest_ref='^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$'
+  if [[ ! "${NVKR_PACKER_BASE_IMAGE}" =~ ${digest_ref} || "${NVKR_PACKER_BASE_IMAGE}" != *"@${base_image#*@}" ]]; then
+    echo "NVKR_PACKER_BASE_IMAGE must be a digest pin of the locked Ubuntu image" >&2
+    exit 1
+  fi
+  if [[ ! "${NVKR_PACKER_DOWNLOAD_IMAGE}" =~ ${digest_ref} || "${NVKR_PACKER_DOWNLOAD_IMAGE}" != *"@${download_image#*@}" ]]; then
+    echo "NVKR_PACKER_DOWNLOAD_IMAGE must be a digest pin of the locked curl image" >&2
+    exit 1
+  fi
+  base_image="${NVKR_PACKER_BASE_IMAGE}"
+  download_image="${NVKR_PACKER_DOWNLOAD_IMAGE}"
+fi
+# The private docker-container builder runs this image. Overrides keep the locked
+# digest and change only the registry name, like the base-image overrides above.
+buildkit_image="$(jq -r '.buildkitImage' "${lock}")"
+if [[ -n "${NVKR_PACKER_BUILDKIT_IMAGE:-}" ]]; then
+  digest_ref='^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$'
+  if [[ ! "${NVKR_PACKER_BUILDKIT_IMAGE}" =~ ${digest_ref} || "${NVKR_PACKER_BUILDKIT_IMAGE}" != *"@${buildkit_image#*@}" ]]; then
+    echo "NVKR_PACKER_BUILDKIT_IMAGE must be a digest pin of the locked BuildKit image" >&2
+    exit 1
+  fi
+  buildkit_image="${NVKR_PACKER_BUILDKIT_IMAGE}"
+fi
 snapshot="$(jq -r '.ubuntuSnapshot' "${lock}")"
 packer_version="$(jq -r '.packer.version' "${lock}")"
 packer_digest="$(jq -r --arg arch "${arch}" '.packer.archives[$arch]' "${lock}")"
@@ -261,29 +337,22 @@ if [[ "${runtime##*/}" == docker ]]; then
   # changes to the image sources require fresh measurements.
   "${runtime}" buildx version
   "${runtime}" version --format 'Docker server {{.Server.Version}}'
-  # Streaming the Docker exporter needs a container-backed Buildx driver, or
-  # the docker driver on a daemon using the containerd image store. The
-  # docker driver on the classic store rejects the export ("Docker exporter
-  # is not supported for the docker driver"); refuse before building.
-  # Only the docker driver depends on the daemon's image store; a
-  # container-backed builder may also be bound to another context.
-  buildx_driver="$("${runtime}" buildx inspect | sed -n 's/^Driver:[[:space:]]*//p')"
-  daemon_storage=""
-  if [[ "${buildx_driver}" == docker ]]; then
-    daemon_storage="$("${runtime}" info --format '{{json .DriverStatus}}')"
+  # The default docker driver rejects the docker exporter unless the containerd
+  # image store is enabled. A private container builder accepts it on any runner,
+  # so this build never depends on the host's image-store setting. The builder
+  # is not made default (no --use), and the EXIT trap removes it.
+  buildkit_builder="nvkr-packer-$$"
+  builder_create=("${runtime}" buildx create --name "${buildkit_builder}"
+    --driver docker-container
+    --driver-opt "image=${buildkit_image}"
+    --driver-opt restart-policy=no
+    --bootstrap)
+  if [[ -n "${buildkit_config}" ]]; then
+    builder_create+=(--buildkitd-config "${buildkit_config}")
   fi
-  if [[ "${buildx_driver}" == docker && "${daemon_storage}" != *io.containerd.snapshotter* ]]; then
-    cat >&2 <<'EOF'
-the selected Docker Buildx builder uses the docker driver on a daemon without the
-containerd image store, which cannot stream the Docker exporter this build uses.
-Select a container-backed builder, for example:
-  docker buildx create --name nvkr-toolchain --driver docker-container
-  export BUILDX_BUILDER=nvkr-toolchain
-or enable the containerd image store in the Docker daemon.
-EOF
-    exit 1
-  fi
+  "${builder_create[@]}" >&2
   build_command=("${runtime}" buildx build
+    --builder "${buildkit_builder}"
     --output "type=docker,dest=-,rewrite-timestamp=true"
     --build-arg SOURCE_DATE_EPOCH=0)
 fi
@@ -370,13 +439,17 @@ if [[ "${diagnostic_local}" -eq 1 ]]; then
   echo 'Diagnostic local toolchain: bind the measured ID in attempt inputs; no maintained-pin, publication or qualification claim.' >&2
 fi
 if [[ "${arch}" != "${native_arch}" ]]; then
-  cleanup_identity
+  cleanup_resources
   trap - EXIT
   printf 'built structurally checked cross-architecture toolchain %s (%s)\n' "${tag}" "${image_id}"
   echo "run this build on a native ${arch} host before publication"
   exit 0
 fi
 
+trust_args=()
+if [[ -n "${trust_ca}" ]]; then
+  trust_args=(--mount "type=bind,src=${trust_ca},dst=/nvkr/trust-ca.pem,readonly")
+fi
 "${runtime}" run --rm \
   --platform "linux/${arch}" \
   --network none \
@@ -385,6 +458,7 @@ fi
   --security-opt no-new-privileges \
   --user "${uid}:${gid}" \
   "${identity_args[@]}" \
+  ${trust_args[@]+"${trust_args[@]}"} \
   --hostname nvkr-packer \
   --tmpfs /nvkr/work:rw,nosuid,nodev,mode=1777 \
   --env CHECKPOINT_DISABLE=1 \
@@ -449,6 +523,12 @@ fi
   test -f /usr/share/OVMF/OVMF_VARS_4M.fd
   test -f /usr/share/AAVMF/AAVMF_CODE.fd
   test -f /usr/share/AAVMF/AAVMF_VARS.fd
+  if [ -e /nvkr/trust-ca.pem ]; then
+    bundle="$(tr -d "\r\n" </etc/ssl/certs/ca-certificates.crt)"
+    for body in $(awk "/^-----BEGIN CERTIFICATE-----\$/ { b = \"\"; next } /^-----END CERTIFICATE-----\$/ { print b; next } { b = b \$0 }" /nvkr/trust-ca.pem); do
+      case "${bundle}" in *"${body}"*) ;; *) echo "toolchain system CA bundle lacks a supplied trust CA" >&2; exit 1 ;; esac
+    done
+  fi
   key="${TMPDIR}/id_ed25519"
   ssh-keygen -q -t ed25519 -N "" -f "${key}"
   test "$(ssh-keygen -y -f "${key}" | cut -d" " -f1-2)" = "$(cut -d" " -f1-2 "${key}.pub")"
@@ -482,7 +562,7 @@ EOF
   grep -Fx "The configuration is valid." "${TMPDIR}/packer-validate.out" >/dev/null
 '
 
-cleanup_identity
+cleanup_resources
 trap - EXIT
 printf 'validated local toolchain %s (%s)\n' "${tag}" "${image_id}"
 echo "publish through an approved registry workflow, then record the immutable repository digest before catalog use"

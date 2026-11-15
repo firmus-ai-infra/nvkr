@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "${repo_root}"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/nvke-os-local-harbor.sh ATTEMPT [JOBS]
+
+Build the locked local toolchain, freeze the exact authored recipe under
+.nvkr/inputs/ATTEMPT, and execute one local non-FDE NVKE OS build on native Linux
+with Docker and KVM. Docker Hub image references the host daemon pulls are
+rewritten to harbor.cbr01.in.firmus.co/dockerhub, as are the Environment's bare
+toolchainAccess.publicRoots entries: the rewritten images are admitted only when
+their registry root is allowed too. The OVN image's Ubuntu base
+(UBUNTU_BASE_IMAGE, or the pinned BASE_IMAGE for Ubuntu 24.04)
+stays on Docker Hub because nested BuildKit does not use the host certificate
+store. The toolchain image is built to trust the host CAs in
+/usr/local/share/ca-certificates, which must include Harbor's issuing CA.
+This is a development bootstrap route.
+
+CONTAINER_RUNTIME defaults to docker; this launcher requires Docker.
+Set NVKE_OS_ARCH=amd64 or NVKE_OS_ARCH=arm64. ARM64 is the compatibility default.
+Set NVKE_OS_UBUNTU_VERSION=24.04 to select Ubuntu 24.04.5; 26.04 is the default.
+Set NVKE_LOCAL_CLONE to a local NVKE Git checkout when replacing the pinned
+repository fetch.
+EOF
+}
+
+rewrite_frozen_harbor_images() {
+  python3 - "$1" "${harbor_registry}" "${packer_base#ubuntu@}" <<'PY'
+import pathlib, re, sys
+path, registry, ubuntu_digest = sys.argv[1], sys.argv[2], sys.argv[3]
+file = pathlib.Path(path)
+text = file.read_text()
+updated = text
+# The first two rules also cover the digest-pinned forms, so they rewrite both
+# an image reference and a bare toolchainAccess.publicRoots entry. The bare
+# buildkit rule needs the lookbehind: as a plain substring it would match again
+# inside the text the docker.io rule just produced and prefix the registry twice.
+for old, new in (
+    ("docker.io/library/golang", f"{registry}/library/golang"),
+    ("docker.io/moby/buildkit", f"{registry}/moby/buildkit"),
+    (re.compile(r"(?<![\w./-])moby/buildkit@sha256:"), f"{registry}/moby/buildkit@sha256:"),
+    ("utilityContainer: golang@sha256:", f"utilityContainer: {registry}/library/golang@sha256:"),
+):
+    updated = old.sub(new, updated) if isinstance(old, re.Pattern) else updated.replace(old, new)
+# Nested BuildKit fetches this base itself. The host Docker CA store does not
+# apply there, so this one pin stays on Docker Hub.
+allowed = (
+    f"build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@{ubuntu_digest}",
+    "build-arg:UBUNTU_BASE_IMAGE=docker.io/library/ubuntu@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78",
+    # Ubuntu 24.04 OVN image (Dockerfile.ubuntu.nv) pins its base by tag and digest.
+    "build-arg:BASE_IMAGE=docker.io/library/ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55",
+)
+remainder = updated
+for item in allowed:
+    remainder = remainder.replace(item, "")
+if "docker.io/" in remainder:
+    # Name the first offending line so a CI log shows the cause.
+    offender = next(
+        (line.strip() for line in remainder.splitlines() if "docker.io/" in line), ""
+    )
+    raise SystemExit(f"ERROR: docker hub reference remains in {path}: {offender}")
+if re.search(r"(?<![\w./-])moby/buildkit@sha256:", updated):
+    raise SystemExit(f"unrewritten buildkit reference remains in {path}")
+if re.search(r"(?<![\w./-])golang@sha256:", updated):
+    raise SystemExit(f"unrewritten golang reference remains in {path}")
+if updated != text:
+    file.write_text(updated)
+PY
+}
+
+pin_overlay_predecessor() {
+  python3 - "$1" "$2" <<'PY'
+import pathlib, re, sys
+path, digest = sys.argv[1], sys.argv[2]
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+    raise SystemExit(f"catalog digest is not a snapshot digest: {digest}")
+file = pathlib.Path(path)
+text = file.read_text()
+updated, count = re.subn(
+    r'(requiresCatalogDigest["\s:]+)sha256:[0-9a-f]{64}',
+    r"\g<1>" + digest,
+    text,
+    count=1,
+)
+if count != 1:
+    raise SystemExit(f"catalog overlay has no requiresCatalogDigest: {path}")
+file.write_text(updated)
+PY
+}
+
+catalog_snapshot_digest() {
+  local digest
+  if [[ $# -eq 0 ]]; then
+    digest="$("${runner}" catalog digest --data "${input_root}/${catalog_source}")"
+  else
+    local -a args=()
+    local overlay
+    for overlay in "$@"; do
+      args+=(--overlay "${overlay}")
+    done
+    digest="$("${runner}" catalog digest --data "${input_root}/${catalog_source}" "${args[@]}")"
+  fi
+  digest="$(printf '%s' "${digest}" | tr -d '[:space:]')"
+  if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "catalog digest did not return a snapshot digest" >&2
+    exit 1
+  fi
+  printf '%s\n' "${digest}"
+}
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  usage >&2
+  exit 2
+fi
+attempt="$1"
+jobs="${2:-1}"
+if [[ ! "${attempt}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+  echo "invalid attempt name: ${attempt}" >&2
+  exit 2
+fi
+if [[ ! "${jobs}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "JOBS must be a positive integer" >&2
+  exit 2
+fi
+input_root=".nvkr/inputs/${attempt}"
+runtime="${CONTAINER_RUNTIME:-docker}"
+arch="${NVKE_OS_ARCH:-arm64}"
+ubuntu_version="${NVKE_OS_UBUNTU_VERSION:-26.04}"
+case "${runtime}" in
+  docker) ;;
+  *) echo "CONTAINER_RUNTIME must be docker" >&2; exit 2 ;;
+esac
+case "${arch}" in
+  amd64|arm64) ;;
+  *) echo "NVKE_OS_ARCH must be amd64 or arm64" >&2; exit 2 ;;
+esac
+case "${ubuntu_version}" in
+  24.04|26.04) ;;
+  *) echo "NVKE_OS_UBUNTU_VERSION must be 24.04 or 26.04" >&2; exit 2 ;;
+esac
+command -v "${runtime}" >/dev/null 2>&1 || {
+  echo "container runtime not found: ${runtime}" >&2
+  exit 1
+}
+
+host_os="$(uname -s)"
+if [[ "${host_os}" != Linux ]]; then
+  echo "the NVKE image build requires native Linux with Docker and KVM" >&2
+  exit 1
+fi
+if [[ "$(id -u)" -eq 0 || "$(id -g)" -eq 0 ]]; then
+  echo "nvke-os-local-harbor.sh must run as a non-root user (not uid 0 or gid 0)" >&2
+  exit 1
+fi
+case "$(uname -m)" in
+  x86_64) host_arch=amd64 ;;
+  aarch64|arm64) host_arch=arm64 ;;
+  *) echo "unsupported Linux host architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+if [[ "${arch}" != "${host_arch}" ]]; then
+  echo "the OS bootstrap requires a native ${arch} host, found: ${host_arch}" >&2
+  exit 1
+fi
+if [[ -n "${NVKE_LOCAL_CLONE:-}" ]]; then
+  if [[ ! -e "${NVKE_LOCAL_CLONE}/.git" ]]; then
+    echo "NVKE_LOCAL_CLONE is not a Git checkout: ${NVKE_LOCAL_CLONE}" >&2
+    exit 1
+  fi
+  nvke_local_clone="$(cd "${NVKE_LOCAL_CLONE}" && pwd -P)"
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_0="url.${nvke_local_clone}.insteadOf"
+  export GIT_CONFIG_VALUE_0="https://github.com/firmus-ai-infra/nvke.git"
+  export GIT_CONFIG_KEY_1="url.${nvke_local_clone}.insteadOf"
+  export GIT_CONFIG_VALUE_1="https://github.com/dsx-ai-factory/nvke.git"
+fi
+command -v jq >/dev/null 2>&1 || {
+  echo "jq is required to validate and freeze the toolchain identity" >&2
+  exit 1
+}
+definition_source="inputs/definitions/diagnostics/os-${arch}.yaml"
+environment_source="inputs/environments/local-linux-${arch}-kvm.yaml"
+catalog_source="inputs/catalogs/node-images/diagnostic"
+definition_catalog='../../catalogs/node-images/diagnostic'
+definition_overlays='[]'
+overlay_source=""
+ubuntu_overlay_source=""
+if [[ "${arch}" == arm64 ]]; then
+  overlay_source="inputs/catalogs/node-images/variants/diagnostic-arm64-kvm.yaml"
+  definition_overlays='["../../catalogs/node-images/variants/diagnostic-arm64-kvm.yaml"]'
+fi
+if [[ "${ubuntu_version}" == 24.04 ]]; then
+  definition_source="inputs/definitions/diagnostics/ubuntu24/definition-${arch}.yaml"
+  catalog_source="inputs/catalogs/node-images/release"
+  overlay_source="inputs/catalogs/node-images/variants/native-toolchains.yaml"
+  ubuntu_overlay_source="inputs/catalogs/node-images/variants/ubuntu24.json"
+  definition_catalog='../../../catalogs/node-images/release'
+  definition_overlays='["../../../catalogs/node-images/variants/native-toolchains.yaml","../../../catalogs/node-images/variants/ubuntu24.json"]'
+fi
+required_inputs=("${definition_source}" "${environment_source}"
+  "${catalog_source}/registry.yaml" "${catalog_source}/pins.lock.yaml"
+  "inputs/catalogs/shared/node-images.yaml")
+if [[ -n "${overlay_source}" ]]; then
+  required_inputs+=("${overlay_source}")
+fi
+if [[ -n "${ubuntu_overlay_source}" ]]; then
+  required_inputs+=("${ubuntu_overlay_source}")
+fi
+for required_input in "${required_inputs[@]}"; do
+  if [[ ! -f "${required_input}" ]]; then
+    echo "maintained ${arch} OS input is unavailable: ${required_input}" >&2
+    exit 1
+  fi
+done
+
+mkdir -p .nvkr/inputs
+if ! mkdir "${input_root}"; then
+  echo "frozen input already exists or cannot be reserved: ${input_root}" >&2
+  exit 1
+fi
+
+bootstrap_root=".nvkr/bootstrap/${attempt}"
+mkdir -p "${bootstrap_root}/go-build" "${bootstrap_root}/go-mod" "${bootstrap_root}/home"
+# A containerized runner and its Docker daemon need not share /tmp. Keep
+# host-side temporary bind sources in the already shared build workspace.
+mkdir -m 0700 "${bootstrap_root}/tmp"
+export TMPDIR="${repo_root}/${bootstrap_root}/tmp"
+
+# The lock stays on Docker Hub names. These overrides change only the registry
+# the Packer toolchain build pulls, and only for this script.
+harbor_registry="harbor.cbr01.in.firmus.co/dockerhub"
+packer_lock="toolchains/nvkr-packer/toolchain.lock.json"
+packer_base="$(jq -er '.baseImage' "${packer_lock}")"
+packer_download="$(jq -er '.downloadImage' "${packer_lock}")"
+case "${packer_base}" in
+  ubuntu@sha256:*) ;;
+  *) echo "packer lock base image is not the admitted Ubuntu pin" >&2; exit 1 ;;
+esac
+case "${packer_download}" in
+  curlimages/curl@sha256:*) ;;
+  *) echo "packer lock download image is not the admitted curl pin" >&2; exit 1 ;;
+esac
+export NVKR_PACKER_BASE_IMAGE="${harbor_registry}/library/${packer_base}"
+export NVKR_PACKER_DOWNLOAD_IMAGE="${harbor_registry}/${packer_download}"
+# The toolchain build runs on a private Buildx container builder whose BuildKit
+# image comes through Harbor. BuildKit pulls the base images with only its
+# bundled public CAs, so it gets the host bundle that includes the Harbor CA.
+packer_buildkit="$(jq -er '.buildkitImage' "${packer_lock}")"
+case "${packer_buildkit}" in
+  moby/buildkit@sha256:*) ;;
+  *) echo "packer lock BuildKit image is not the admitted builder pin" >&2; exit 1 ;;
+esac
+# NVKR_HARBOR_CA_BUNDLE exists for contract tests; the runner uses the default.
+# The path is written into a TOML string, so quotes and backslashes are rejected.
+harbor_ca_bundle="${NVKR_HARBOR_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+if [[ "${harbor_ca_bundle}" != /* || "${harbor_ca_bundle}" == *[\"\\]* ]]; then
+  echo "Harbor CA bundle must be an absolute path without quotes or backslashes: ${harbor_ca_bundle}" >&2
+  exit 1
+fi
+if [[ ! -f "${harbor_ca_bundle}" || ! -r "${harbor_ca_bundle}" ]]; then
+  echo "Harbor CA bundle for the toolchain BuildKit builder is missing or unreadable: ${harbor_ca_bundle}" >&2
+  exit 1
+fi
+buildkit_config="${TMPDIR}/buildkitd.toml"
+cat >"${buildkit_config}" <<EOF
+[registry."harbor.cbr01.in.firmus.co"]
+  ca = ["${harbor_ca_bundle}"]
+
+[registry."harbor.cbr01.co"]
+  ca = ["${harbor_ca_bundle}"]
+EOF
+# Vendoring runs crane, curl and Go inside the toolchain image, which does not
+# inherit host trust. Install the host's locally added CAs, which include
+# Harbor's issuer, into that image's system store.
+# NVKR_HARBOR_TRUST_CA_DIR exists for contract tests; the runner uses the default.
+harbor_trust_ca_dir="${NVKR_HARBOR_TRUST_CA_DIR:-/usr/local/share/ca-certificates}"
+toolchain_trust_ca="${TMPDIR}/toolchain-trust-ca.pem"
+: >"${toolchain_trust_ca}"
+trust_ca_count=0
+if [[ -d "${harbor_trust_ca_dir}" ]]; then
+  while IFS= read -r trust_ca_file; do
+    [[ -n "${trust_ca_file}" ]] || continue
+    cat -- "${trust_ca_file}" >>"${toolchain_trust_ca}"
+    printf '\n' >>"${toolchain_trust_ca}"
+    trust_ca_count=$((trust_ca_count + 1))
+  done < <(find -L "${harbor_trust_ca_dir}" -type f -name '*.crt' -print | LC_ALL=C sort)
+fi
+if [[ "${trust_ca_count}" -eq 0 ]]; then
+  echo "no locally installed CA certificate (*.crt) in ${harbor_trust_ca_dir}; the toolchain image must trust Harbor's issuing CA" >&2
+  exit 1
+fi
+
+toolchain_image="$(NVKR_PACKER_BUILDKIT_IMAGE="${harbor_registry}/${packer_buildkit}" \
+  NVKR_BUILDKIT_CONFIG="${buildkit_config}" \
+  NVKR_TOOLCHAIN_TRUST_CA="${toolchain_trust_ca}" \
+  CONTAINER_RUNTIME="${runtime}" toolchains/nvkr-packer/build.sh \
+  --arch "${arch}" --print-validated-image-id)"
+if [[ ! "${toolchain_image}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "the native Docker build did not return an exact validated image ID" >&2
+  exit 1
+fi
+
+# Preserve sibling fragment references inside this attempt, rather than leaving
+# them pointed at mutable declarations outside the frozen input root.
+mkdir -p "${input_root}/${catalog_source}" "${input_root}/inputs/catalogs/shared"
+cp "${environment_source}" "${input_root}/environment-local.yaml"
+cp -R "${catalog_source}/." "${input_root}/${catalog_source}/"
+cp -R inputs/catalogs/shared/. "${input_root}/inputs/catalogs/shared/"
+if [[ -n "${overlay_source}" ]]; then
+  cp "${overlay_source}" "${input_root}/$(basename "${overlay_source}")"
+fi
+if [[ -n "${ubuntu_overlay_source}" ]]; then
+  cp "${ubuntu_overlay_source}" "${input_root}/ubuntu24.json"
+fi
+
+# Build the bootstrap runner from this checkout in the exact pinned native
+# toolchain. A pre-existing bin/nvkr may belong to an older revision.
+"${runtime}" run --rm --pull=never --network=bridge \
+  --read-only --cap-drop=all \
+  --security-opt no-new-privileges --security-opt label=disable \
+  --user "$(id -u):$(id -g)" \
+  --tmpfs /tmp:rw,nosuid,nodev \
+  --volume "${repo_root}:/src:ro" \
+  --volume "${repo_root}/${bootstrap_root}:/out:rw" \
+  --env CGO_ENABLED=0 \
+  --env GOCACHE=/out/go-build \
+  --env GOMODCACHE=/out/go-mod \
+  --env GOTOOLCHAIN=local \
+  --env HOME=/out/home \
+  "${toolchain_image}" \
+  make -C /src build BIN=/out/nvkr VERSION=dev COMMIT=unknown
+runner="${bootstrap_root}/nvkr"
+if [[ ! -x "${runner}" ]]; then
+  echo "the pinned toolchain did not produce ${runner}" >&2
+  exit 1
+fi
+
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 is required to rewrite frozen Harbor image references" >&2
+  exit 1
+}
+rewrite_frozen_harbor_images "${input_root}/${catalog_source}/registry.yaml"
+rewrite_frozen_harbor_images "${input_root}/inputs/catalogs/shared/node-images.yaml"
+rewrite_frozen_harbor_images "${input_root}/environment-local.yaml"
+if [[ -f "${input_root}/ubuntu24.json" ]]; then
+  rewrite_frozen_harbor_images "${input_root}/ubuntu24.json"
+fi
+snapshot_digest="$(catalog_snapshot_digest)"
+applied_overlays=()
+while IFS= read -r overlay_name; do
+  [[ -n "${overlay_name}" ]] || continue
+  overlay_file="${input_root}/${overlay_name}"
+  pin_overlay_predecessor "${overlay_file}" "${snapshot_digest}"
+  applied_overlays+=("${overlay_file}")
+  snapshot_digest="$(catalog_snapshot_digest "${applied_overlays[@]}")"
+done < <(jq -r '.[] | split("/") | last' <<<"${definition_overlays}")
+
+frozen_definition="${input_root}/definition.yaml"
+# Keep the exact selected catalog stack and source patches local to this attempt.
+# Reject authored drift instead of silently replacing an unexpected catalog.
+"${runner}" definition inspect --definition "${definition_source}" |
+  jq --arg catalog "${definition_catalog}" --arg frozen_catalog "${catalog_source}" --argjson overlays "${definition_overlays}" '
+    if .catalog.base != $catalog or any(.outputs[]; .catalog != null) or
+      (.catalog.overlays // []) != $overlays then
+      error("OS bootstrap requires the maintained catalog and ordered overlays")
+    else . end |
+    .catalog.base = $frozen_catalog |
+    if .catalog.overlays then .catalog.overlays |= map(split("/") | last) else . end' \
+  >"${frozen_definition}"
+# The native Docker build is an attempt input, not a maintained release pin.
+# Freeze its observed exact ID through the existing catalog overlay contract
+# before compiling the executable Plan. The Packer runtime rechecks the ID.
+plan="$("${runner}" run plan --definition "${frozen_definition}" \
+  --environment "${input_root}/environment-local.yaml" --json)"
+root_component="$(jq -L scripts -er 'include "nvke-os-plan"; disk_root' <<<"${plan}")"
+baseline="$(jq -er --arg root "${root_component}" --arg arch "${arch}" \
+  '.builds[0].catalogSnapshot.Components[$root].toolchainImages[$arch]' <<<"${plan}")"
+if [[ "${baseline}" != "${toolchain_image}" ]]; then
+  catalog_digest="$(jq -er '.builds[0].catalogDigest' <<<"${plan}")"
+  components="$(jq -c --arg arch "${arch}" --arg baseline "${baseline}" '
+    .builds[0].components as $selected |
+    [.builds[0].catalogSnapshot.Components | to_entries[] |
+      select(.key as $name | $selected | index($name)) |
+      select(.value.fromSource == true and .value.toolchainImages[$arch] == $baseline) | .key] | sort
+  ' <<<"${plan}")"
+  if [[ "$(jq 'length' <<<"${components}")" -eq 0 ]]; then
+    echo "no catalog components use the selected ${arch} toolchain baseline" >&2
+    exit 1
+  fi
+  jq -L scripts -n --arg arch "${arch}" --arg from "${baseline}" --arg to "${toolchain_image}" \
+    --arg digest "${catalog_digest}" --argjson components "${components}" '
+    include "nvke-os-plan";
+    toolchain_overlay($arch; $from; $to; $digest; $components)
+  ' >"${input_root}/toolchain-attempt.json"
+  "${runner}" definition inspect --definition "${frozen_definition}" |
+    jq '.catalog.overlays = ((.catalog.overlays // []) + ["toolchain-attempt.json"])' \
+    >"${input_root}/definition-attempt.json"
+  frozen_definition="${input_root}/definition-attempt.json"
+fi
+final_plan="$("${runner}" run plan --definition "${frozen_definition}" \
+  --environment "${input_root}/environment-local.yaml" --json)"
+if ! jq -e --arg root "${root_component}" --arg image "${toolchain_image}" '
+  [.builds[0].executionGraph.nodes[] |
+    select(.kind == "build" and .component == $root and .toolchain == $image)] | length == 1
+' <<<"${final_plan}" >/dev/null; then
+  echo "the frozen ${arch} Plan does not bind the observed Packer toolchain" >&2
+  exit 1
+fi
+
+exec "${runner}" run local \
+  --definition "${frozen_definition}" \
+  --environment "${input_root}/environment-local.yaml" \
+  --attempt "${attempt}" \
+  --attempts-root .nvkr/runs \
+  --runner-source . \
+  --jobs "${jobs}" \
+  --runtime "${runtime}" --ui=plain
