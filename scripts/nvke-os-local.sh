@@ -63,6 +63,10 @@ if [[ "${host_os}" != Linux ]]; then
   echo "the NVKE image build requires native Linux with Docker and KVM" >&2
   exit 1
 fi
+if [[ "$(id -u)" -eq 0 || "$(id -g)" -eq 0 ]]; then
+  echo "nvke-os-local.sh must run as a non-root user (not uid 0 or gid 0)" >&2
+  exit 1
+fi
 case "$(uname -m)" in
   x86_64) host_arch=amd64 ;;
   aarch64|arm64) host_arch=arm64 ;;

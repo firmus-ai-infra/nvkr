@@ -2,83 +2,113 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Customer-owned CircleCI config. NVKR does not generate this file.
-# Any branch validates and plans. main builds the linux/amd64 nvkectl executable.
-# cwe, nvke-helm, and publication stay out of this config.
+# Manually triggered on any branch (run_os_build=true). Builds the Ubuntu 24.04.5
+# ARM64 non-FDE NVKE node QCOW2 as a non-root user, runs NVKE boot-smoke.sh under
+# KVM, uploads the commit-SHA QCOW2 and sidecars to RustFS (when publish_node_image
+# is true), and stages metadata/logs in CircleCI store_artifacts.
 version: 2.1
 
 parameters:
-  # Plan only, even on main.
+  run_os_build:
+    type: boolean
+    default: false
   dry_run:
     type: boolean
     default: false
+  publish_node_image:
+    type: boolean
+    default: true
+  jobs:
+    type: integer
+    default: 4
 
 executors:
-  controller:
+  arm64-kvm:
     machine: true
-    resource_class: firmus/controller
+    resource_class: firmus/arm64-native
     environment:
       GOTOOLCHAIN: local
+      S3_ENDPOINT: https://s3-console.cbr01.in.firmus.co/
+      S3_BUCKET: nvke
+      S3_PREFIX: nvke-node-image-ubuntu24-arm64
 
 jobs:
-  build-tutorial:
-    executor: controller
+  build-ubuntu24-arm64-os:
+    executor: arm64-kvm
     parameters:
-      execute:
-        type: boolean
-        default: false
+      jobs:
+        type: integer
+        default: 4
     steps:
       - checkout
 
       - run:
-          name: Install the pinned Go toolchain
+          name: Initialize non-root workspace environment
           command: |
             set -euo pipefail
-            case "$(uname -m)" in
-              x86_64) goarch=amd64 ;;
-              aarch64) goarch=arm64 ;;
-              *)
-                echo "unsupported machine architecture $(uname -m)" >&2
+            if [ "$(id -u)" -eq 0 ] || [ "$(id -g)" -eq 0 ]; then
+              echo "CircleCI OS build must run as a non-root user (not uid 0 or gid 0)" >&2
+              exit 1
+            fi
+            if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
+              echo "CIRCLE_BUILD_NUM is required for the immutable attempt identity" >&2
+              exit 1
+            fi
+            case "${CIRCLE_BUILD_NUM}" in
+              *[!A-Za-z0-9._-]*)
+                echo "CIRCLE_BUILD_NUM contains unsupported characters: ${CIRCLE_BUILD_NUM}" >&2
                 exit 1
                 ;;
             esac
-            go_version="$(tr -d '[:space:]' < .go-version)"
-            if [ "${go_version}" != "1.27.3" ]; then
-              echo "expected Go 1.27.3 in .go-version, found ${go_version}" >&2
-              exit 1
-            fi
-            tarball="go${go_version}.linux-${goarch}.tar.gz"
-            # go.dev/dl/<file>.sha256 is an HTML page. The checksum is the plain digest on dl.google.com.
-            curl -fsSL -o "/tmp/${tarball}" "https://dl.google.com/go/${tarball}"
-            curl -fsSL -o "/tmp/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
-            digest="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
-            case "${digest}" in
+            full_sha="$(git rev-parse HEAD)"
+            short_sha="$(git rev-parse --short=12 HEAD)"
+            case "${short_sha}" in
               *[!0-9a-f]*|"")
-                echo "Go checksum file is not a hex digest" >&2
+                echo "git short SHA is not lowercase hex: ${short_sha}" >&2
                 exit 1
                 ;;
             esac
-            if [ "${#digest}" -ne 64 ]; then
-              echo "Go checksum file is not a SHA-256 digest" >&2
+            if [ "${#short_sha}" -ne 12 ] || [[ "${full_sha}" != "${short_sha}"* ]]; then
+              echo "git short SHA ${short_sha} must be 12 hex characters matching HEAD ${full_sha}" >&2
               exit 1
             fi
-            echo "${digest}  /tmp/${tarball}" | sha256sum -c -
-            sudo rm -rf /usr/local/go
-            sudo tar -C /usr/local -xzf "/tmp/${tarball}"
-            echo 'export PATH="/usr/local/go/bin:${PATH}"' >> "${BASH_ENV}"
-            echo 'export GOTOOLCHAIN=local' >> "${BASH_ENV}"
-            echo 'unset GITHUB_ACTIONS' >> "${BASH_ENV}"
-            # shellcheck disable=SC1090
-            source "${BASH_ENV}"
-            test "$(go env GOVERSION)" = "go${go_version}"
-            test "$(go env GOHOSTARCH)" = "${goarch}"
+            if [ -n "${CIRCLE_SHA1:-}" ] && [ "${full_sha}" != "${CIRCLE_SHA1}" ]; then
+              echo "checked-out HEAD ${full_sha} does not match CIRCLE_SHA1 ${CIRCLE_SHA1}" >&2
+              exit 1
+            fi
+            attempt="circleci-${CIRCLE_BUILD_NUM}"
+            mkdir -p \
+              ".nvkr/evidence/${attempt}" \
+              ".nvkr/home/${attempt}" \
+              ".nvkr/tmp/${attempt}" \
+              ".nvkr/artifacts/${attempt}"
+            {
+              echo 'unset GITHUB_ACTIONS'
+              printf 'export HOME=%q\n' "${PWD}/.nvkr/home/${attempt}"
+              printf 'export TMPDIR=%q\n' "${PWD}/.nvkr/tmp/${attempt}"
+              echo 'export GOTOOLCHAIN=local'
+              printf 'export NVKR_ATTEMPT=%q\n' "${attempt}"
+              printf 'export NVKR_GIT_SHA=%q\n' "${short_sha}"
+              printf 'export NVKR_FULL_SHA=%q\n' "${full_sha}"
+            } >> "${BASH_ENV}"
 
       - run:
-          name: Validate the Definition
+          name: Admit non-root ARM64 KVM host, Docker Buildx, and mc
           command: |
             set -euo pipefail
-            unset GITHUB_ACTIONS
-            export PATH="/usr/local/go/bin:${PATH}"
-            export GOTOOLCHAIN=local
+            # shellcheck disable=SC1090
+            source "${BASH_ENV}"
+            if [ "$(id -u)" -eq 0 ] || [ "$(id -g)" -eq 0 ]; then
+              echo "host preflight refused root uid/gid" >&2
+              exit 1
+            fi
+            if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "aarch64" ]; then
+              echo "Ubuntu 24 ARM64 OS build requires a native Linux aarch64 host, got $(uname -s)/$(uname -m)" >&2
+              exit 1
+            fi
+            for cmd in git jq curl make sha256sum stat docker; do
+              command -v "${cmd}" >/dev/null || { echo "missing required tool: ${cmd}" >&2; exit 1; }
+            done
             git_version="$(git version | awk '{ print $3 }')"
             git_major="${git_version%%.*}"
             git_rest="${git_version#*.}"
@@ -88,89 +118,311 @@ jobs:
               echo "git ${git_version} is older than 2.38" >&2
               exit 1
             fi
-            command -v make >/dev/null
-            make build
-            bin/nvkr definition validate \
-              --definition .circleci/definition-nvkectl.yaml
+            if ! docker info >/dev/null 2>&1; then
+              echo "docker daemon is not reachable" >&2
+              exit 1
+            fi
+            if ! docker buildx version >/dev/null 2>&1; then
+              echo "docker buildx plugin is required" >&2
+              exit 1
+            fi
+            if [ ! -c /dev/kvm ] || [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+              echo "runner identity $(id -un) needs read/write access to /dev/kvm" >&2
+              exit 1
+            fi
+            exec 3<>/dev/kvm
+            exec 3>&-
+            cpu="$(getconf _NPROCESSORS_ONLN)"
+            mem_mib="$(awk '/^MemAvailable:/ {printf "%d", $2 / 1024}' /proc/meminfo)"
+            free_mib="$(df -Pm . | awk 'NR==2 {print $4}')"
+            printf 'Host capacity: CPUs=%s/8 MemAvailable=%s/10240 MiB WorkspaceFree=%s/65536 MiB\n' \
+              "${cpu}" "${mem_mib}" "${free_mib}"
+            if [ "${cpu}" -lt 8 ] || [ "${mem_mib}" -lt 10240 ] || [ "${free_mib}" -lt 65536 ]; then
+              echo "insufficient host resources: require >=8 CPUs, >=10240 MiB RAM, >=65536 MiB free disk" >&2
+              exit 1
+            fi
+            if [ "${free_mib}" -lt 92160 ]; then
+              echo "warning: less than 90 GiB free before material staging" >&2
+            fi
+            buildx_driver="$(docker buildx inspect | sed -n 's/^Driver:[[:space:]]*//p')"
+            driver_status="$(docker info --format '{{json .DriverStatus}}')"
+            if [ "${buildx_driver}" = "docker" ] && [[ "${driver_status}" != *io.containerd.snapshotter* ]]; then
+              if ! docker buildx inspect nvkr-toolchain >/dev/null 2>&1; then
+                docker buildx create --name nvkr-toolchain --driver docker-container >/dev/null
+              fi
+              echo 'export BUILDX_BUILDER=nvkr-toolchain' >> "${BASH_ENV}"
+            fi
 
-      # Planned on every path. The plan describes the Run and does not execute it.
-      - run:
-          name: Plan
-          command: |
-            set -euo pipefail
-            unset GITHUB_ACTIONS
-            export PATH="/usr/local/go/bin:${PATH}"
-            export GOTOOLCHAIN=local
-            bin/nvkr run plan \
-              --definition .circleci/definition-nvkectl.yaml \
-              --environment docs/examples/nvke-tutorial/environment-local.yaml
+      - when:
+          condition: << pipeline.parameters.dry_run >>
+          steps:
+            - run:
+                name: Validate and plan Ubuntu 24 ARM64 Definition (dry-run)
+                command: |
+                  set -euo pipefail
+                  # shellcheck disable=SC1090
+                  source "${BASH_ENV}"
+                  go_version="$(tr -d '[:space:]' < .go-version)"
+                  tools_dir="${PWD}/.nvkr/tools/${NVKR_ATTEMPT}"
+                  mkdir -p "${tools_dir}/go-dl" "${tools_dir}/gocache" "${tools_dir}/gomodcache"
+                  tarball="go${go_version}.linux-arm64.tar.gz"
+                  curl -fsSL -o "${tools_dir}/go-dl/${tarball}" "https://dl.google.com/go/${tarball}"
+                  curl -fsSL -o "${tools_dir}/go-dl/${tarball}.sha256" "https://dl.google.com/go/${tarball}.sha256"
+                  digest="$(tr -d '[:space:]' < "${tools_dir}/go-dl/${tarball}.sha256")"
+                  case "${digest}" in
+                    *[!0-9a-f]*|"")
+                      echo "Go checksum file is not a hex digest" >&2
+                      exit 1
+                      ;;
+                  esac
+                  if [ "${#digest}" -ne 64 ]; then
+                    echo "Go checksum file is not a SHA-256 digest" >&2
+                    exit 1
+                  fi
+                  echo "${digest}  ${tools_dir}/go-dl/${tarball}" | sha256sum -c -
+                  tar -C "${tools_dir}" -xzf "${tools_dir}/go-dl/${tarball}"
+                  export PATH="${tools_dir}/go/bin:${PATH}"
+                  export GOCACHE="${tools_dir}/gocache"
+                  export GOMODCACHE="${tools_dir}/gomodcache"
+                  export GOTOOLCHAIN=local
+                  test "$(go env GOVERSION)" = "go${go_version}"
+                  make build BIN="${tools_dir}/nvkr"
+                  "${tools_dir}/nvkr" definition validate \
+                    --definition inputs/definitions/diagnostics/ubuntu24/definition-arm64.yaml
+                  "${tools_dir}/nvkr" run plan \
+                    --definition inputs/definitions/diagnostics/ubuntu24/definition-arm64.yaml \
+                    --environment inputs/environments/local-linux-arm64-kvm.yaml \
+                    --json > ".nvkr/evidence/${NVKR_ATTEMPT}/dry-run-plan.json"
 
       - when:
           condition:
-            and:
-              - << parameters.execute >>
-              - not: << pipeline.parameters.dry_run >>
+            not: << pipeline.parameters.dry_run >>
           steps:
+            - when:
+                condition: << pipeline.parameters.publish_node_image >>
+                steps:
+                  - run:
+                      name: Admit mc for RustFS upload
+                      command: |
+                        set -euo pipefail
+                        command -v mc >/dev/null || {
+                          echo "mc (MinIO client) is required when publish_node_image=true" >&2
+                          exit 1
+                        }
+                        : "${CIRCLE_SHA1:?CIRCLE_SHA1 is required for RustFS publication}"
+
             - run:
-                name: Admit the local build host
+                name: Build Ubuntu 24.04.5 ARM64 node OS image
+                no_output_timeout: 6h
                 command: |
                   set -euo pipefail
-                  if [ "$(uname -m)" != "x86_64" ]; then
-                    echo "nvkectl is linux/amd64 and needs an amd64 machine" >&2
+                  # shellcheck disable=SC1090
+                  source "${BASH_ENV}"
+                  if [ "<< parameters.jobs >>" -lt 1 ]; then
+                    echo "jobs parameter must be >= 1" >&2
                     exit 1
                   fi
-                  if ! docker info >/dev/null 2>&1; then
-                    echo "docker is not available" >&2
-                    exit 1
-                  fi
+                  CONTAINER_RUNTIME=docker \
+                  NVKE_OS_ARCH=arm64 \
+                  NVKE_OS_UBUNTU_VERSION=24.04 \
+                  scripts/nvke-os-local.sh "${NVKR_ATTEMPT}" "<< parameters.jobs >>" \
+                    2>&1 | tee ".nvkr/evidence/${NVKR_ATTEMPT}/lifecycle-arm64.log"
+                  output_dir=".nvkr/runs/${NVKR_ATTEMPT}/outputs"
+                  qcow="${output_dir}/nvke-node-image-ubuntu24-arm64.qcow2"
+                  test -f "${qcow}"
+                  test "$(find "${output_dir}" -maxdepth 1 -type f -name '*.qcow2' | wc -l | tr -d ' ')" = "1"
+
             - run:
-                name: Build nvkectl
-                no_output_timeout: 30m
+                name: Record disk digest and build-info
                 command: |
                   set -euo pipefail
-                  unset GITHUB_ACTIONS
-                  export PATH="/usr/local/go/bin:${PATH}"
-                  export GOTOOLCHAIN=local
-                  if [ -z "${CIRCLE_BUILD_NUM:-}" ]; then
-                    echo "CIRCLE_BUILD_NUM is required for the attempt name" >&2
+                  # shellcheck disable=SC1090
+                  source "${BASH_ENV}"
+                  outdir=".nvkr/runs/${NVKR_ATTEMPT}/outputs"
+                  qcow="${outdir}/nvke-node-image-ubuntu24-arm64.qcow2"
+                  test -f "${qcow}"
+                  test -f ".nvkr/runs/${NVKR_ATTEMPT}/lifecycle.json"
+                  (
+                    cd "${outdir}"
+                    sha256sum "$(basename "${qcow}")" > "$(basename "${qcow}").sha256"
+                    sha256sum -c "$(basename "${qcow}").sha256"
+                  )
+                  digest="$(awk '{ print $1 }' "${qcow}.sha256")"
+                  case "${digest}" in
+                    *[!0-9a-f]*|"")
+                      echo "disk checksum is not a hex digest" >&2
+                      exit 1
+                      ;;
+                  esac
+                  if [ "${#digest}" -ne 64 ]; then
+                    echo "disk checksum is not a SHA-256 digest" >&2
                     exit 1
                   fi
-                  bin/nvkr run local \
-                    --definition .circleci/definition-nvkectl.yaml \
-                    --environment docs/examples/nvke-tutorial/environment-local.yaml \
-                    --attempt "circleci-${CIRCLE_BUILD_NUM}" \
-                    --ui=plain --jobs 1
+                  size="$(stat -c %s "${qcow}")"
+                  artifact="nvke-node-image-ubuntu24-arm64-${NVKR_GIT_SHA}.qcow2"
+                  printf 'attempt: %s\nbuild_number: %s\ncommit: %s\nartifact: %s\nsize: %s\ndigest: sha256:%s\n' \
+                    "${NVKR_ATTEMPT}" "${CIRCLE_BUILD_NUM}" "${NVKR_FULL_SHA}" "${artifact}" "${size}" "${digest}" \
+                    > "${outdir}/build-info.txt"
+
             - run:
-                name: Stage the attempt record
-                when: always
+                name: Run source-owned boot smoke under KVM
+                no_output_timeout: 45m
                 command: |
                   set -euo pipefail
-                  src=".nvkr/runs/circleci-${CIRCLE_BUILD_NUM}/lifecycle.json"
-                  mkdir -p /tmp/nvkr-artifacts
-                  if [ -f "${src}" ]; then
-                    cp "${src}" /tmp/nvkr-artifacts/lifecycle.json
-                  else
-                    printf 'attempt record missing: %s\n' "${src}" > /tmp/nvkr-artifacts/lifecycle-missing.txt
-                    exit 1
-                  fi
-            - store_artifacts:
-                path: /tmp/nvkr-artifacts
-                destination: nvkr-attempt
-                when: always
+                  # shellcheck disable=SC1090
+                  source "${BASH_ENV}"
+                  plan=".nvkr/runs/${NVKR_ATTEMPT}/.runner/plan.json"
+                  qcow=".nvkr/runs/${NVKR_ATTEMPT}/outputs/nvke-node-image-ubuntu24-arm64.qcow2"
+                  test -f "${plan}"
+                  test -f "${qcow}"
+                  image="$(jq -er '
+                    [.builds[].executionGraph.nodes[] |
+                      select(.kind == "build" and .builderType == "vm-image") | .toolchain] |
+                    if length == 1 then .[0] else error("expected exactly one vm-image toolchain") end
+                  ' "${plan}")"
+                  observed="$(docker image inspect --format '{{.Id}}' "${image}")"
+                  test "${observed}" = "${image}"
+                  printf '%s\n' "${image}" > ".nvkr/evidence/${NVKR_ATTEMPT}/toolchain-arm64.image-id"
+                  nvke_commit="$(jq -er '
+                    [.builds[].executionGraph.nodes[] |
+                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")))] |
+                    if length > 0 then .[0].commit else error("missing nvke fetch node") end
+                  ' "${plan}")"
+                  nvke_tree="$(jq -er --arg c "${nvke_commit}" '
+                    [.builds[].executionGraph.nodes[] |
+                      select(.kind == "fetch" and (.repo | endswith("/nvke.git")) and .commit == $c)] |
+                    if length > 0 and all(.[]; .treeHash == .[0].treeHash) then .[0].treeHash else error("inconsistent nvke treeHash") end
+                  ' "${plan}")"
+                  smoke_src=".nvkr/boot-smoke-src/${NVKR_ATTEMPT}"
+                  mkdir -p "${smoke_src}"
+                  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_TERMINAL_PROMPT=0 \
+                    git init -q "${smoke_src}"
+                  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_TERMINAL_PROMPT=0 \
+                    timeout 300 git -C "${smoke_src}" -c credential.helper= fetch --depth=1 \
+                      https://github.com/dsx-ai-factory/nvke.git "${nvke_commit}"
+                  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_TERMINAL_PROMPT=0 \
+                    git -C "${smoke_src}" checkout -q --detach FETCH_HEAD
+                  test "$(git -C "${smoke_src}" rev-parse HEAD)" = "${nvke_commit}"
+                  test "$(git -C "${smoke_src}" rev-parse 'HEAD^{tree}')" = "${nvke_tree}"
+                  smoke_work="${PWD}/.nvkr/boot-smoke/${NVKR_ATTEMPT}/work"
+                  identity_dir="${PWD}/.nvkr/boot-smoke/${NVKR_ATTEMPT}/identity"
+                  mkdir -p "${smoke_work}/tmp"
+                  install -d -m 0700 "${identity_dir}"
+                  printf 'nvkr:x:%s:%s:NVKR Builder:/work:/bin/sh\n' "$(id -u)" "$(id -g)" \
+                    > "${identity_dir}/passwd"
+                  printf 'nvkr:x:%s:\n' "$(id -g)" > "${identity_dir}/group"
+                  chmod 0400 "${identity_dir}/passwd" "${identity_dir}/group"
+                  kvm_group="$(stat -c %g /dev/kvm)"
+                  docker run --rm --pull=never --network=none --read-only --cap-drop=all \
+                    --security-opt no-new-privileges --device /dev/kvm --group-add "${kvm_group}" \
+                    --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,nosuid,nodev \
+                    --mount "type=bind,src=${identity_dir}/passwd,dst=/etc/passwd,readonly" \
+                    --mount "type=bind,src=${identity_dir}/group,dst=/etc/group,readonly" \
+                    --volume "${PWD}/${smoke_src}:/nvke:ro" \
+                    --volume "${PWD}/${qcow}:/nvke-node-image-ubuntu24-arm64.qcow2:ro" \
+                    --volume "${smoke_work}:/work:rw" \
+                    --env HOME=/work --env TMPDIR=/work/tmp --env ARCH=arm64 \
+                    --entrypoint bash "${image}" -ec '
+                      ssh-keygen -q -t ed25519 -N "" -f /work/id_ed25519
+                      QCOW=/nvke-node-image-ubuntu24-arm64.qcow2 SSH_KEY=/work/id_ed25519 REQUIRE_ACCELERATION=1 \
+                        /nvke/os-image/packer/scripts/boot-smoke.sh
+                    ' 2>&1 | tee ".nvkr/evidence/${NVKR_ATTEMPT}/boot-smoke-arm64.log"
+
+            - when:
+                condition: << pipeline.parameters.publish_node_image >>
+                steps:
+                  - run:
+                      name: Upload commit-SHA node image to RustFS
+                      command: |
+                        set -euo pipefail
+                        # shellcheck disable=SC1090
+                        source "${BASH_ENV}"
+                        scripts/push-node-image-s3.sh \
+                          ".nvkr/runs/${NVKR_ATTEMPT}/outputs/nvke-node-image-ubuntu24-arm64.qcow2"
+
+      - run:
+          name: Stage metadata, logs, and diagnostics
+          when: always
+          command: |
+            set -euo pipefail
+            if [ -f "${BASH_ENV}" ]; then
+              # shellcheck disable=SC1090
+              source "${BASH_ENV}"
+            fi
+            attempt="${NVKR_ATTEMPT:-circleci-${CIRCLE_BUILD_NUM:-unknown}}"
+            dst_dir=".nvkr/artifacts/${attempt}"
+            mkdir -p "${dst_dir}"
+            if [ -d ".nvkr/evidence/${attempt}" ]; then
+              cp -R ".nvkr/evidence/${attempt}/." "${dst_dir}/"
+            fi
+            outdir=".nvkr/runs/${attempt}/outputs"
+            if [ -f "${outdir}/nvke-node-image-ubuntu24-arm64.qcow2.sha256" ]; then
+              cp "${outdir}/nvke-node-image-ubuntu24-arm64.qcow2.sha256" "${dst_dir}/"
+            fi
+            if [ -f "${outdir}/build-info.txt" ]; then
+              cp "${outdir}/build-info.txt" "${dst_dir}/"
+            fi
+            if [ -f ".nvkr/runs/${attempt}/lifecycle.json" ]; then
+              cp ".nvkr/runs/${attempt}/lifecycle.json" "${dst_dir}/lifecycle.json"
+            fi
+            if [ -f ".nvkr/runs/${attempt}/.runner/plan.json" ]; then
+              cp ".nvkr/runs/${attempt}/.runner/plan.json" "${dst_dir}/plan.json"
+            fi
+            if [ -d ".nvkr/runs/${attempt}/diagnostics/packer" ]; then
+              cp -R ".nvkr/runs/${attempt}/diagnostics/packer" "${dst_dir}/packer-diagnostics"
+            fi
+
+      - store_artifacts:
+          path: .nvkr/artifacts
+          destination: nvkr-os-build
+          when: always
+
+      - run:
+          name: Clean up non-root attempt workspace
+          when: always
+          command: |
+            set -euo pipefail
+            if [ -f "${BASH_ENV}" ]; then
+              # shellcheck disable=SC1090
+              source "${BASH_ENV}"
+            fi
+            attempt="${NVKR_ATTEMPT:-circleci-${CIRCLE_BUILD_NUM:-unknown}}"
+            uid="$(id -u)"
+            gid="$(id -g)"
+            targets=(
+              ".nvkr/inputs/${attempt}"
+              ".nvkr/bootstrap/${attempt}"
+              ".nvkr/runs/${attempt}"
+              ".nvkr/boot-smoke-src/${attempt}"
+              ".nvkr/boot-smoke/${attempt}"
+              ".nvkr/artifacts/${attempt}"
+              ".nvkr/evidence/${attempt}"
+              ".nvkr/tmp/${attempt}"
+              ".nvkr/home/${attempt}"
+              ".nvkr/tools/${attempt}"
+            )
+            foreign_found=0
+            for dir in "${targets[@]}"; do
+              if [ -e "${dir}" ]; then
+                foreign="$(find "${dir}" \( ! -user "${uid}" -o ! -group "${gid}" \) -print | head -n 20 || true)"
+                if [ -n "${foreign}" ]; then
+                  echo "unexpected non-runner ownership under ${dir}:" >&2
+                  printf '%s\n' "${foreign}" >&2
+                  foreign_found=1
+                fi
+                chmod -R u+rwX "${dir}" 2>/dev/null || true
+                rm -rf -- "${dir}"
+              fi
+            done
+            if [ "${foreign_found}" -ne 0 ]; then
+              exit 1
+            fi
 
 workflows:
-  tutorial:
+  os-build:
+    when: << pipeline.parameters.run_os_build >>
     jobs:
-      # Feature branches prove the Definition and the plan. They do not build.
-      - build-tutorial:
-          name: verify
-          filters:
-            branches:
-              ignore: main
-      # main builds. A pipeline started with dry_run still stops after the plan.
-      - build-tutorial:
-          name: build
-          execute: true
-          filters:
-            branches:
-              only: main
+      # nico-harbor supplies S3_ACCESS_KEY and S3_SECRET_KEY.
+      - build-ubuntu24-arm64-os:
+          context: [nico-harbor]
+          jobs: << pipeline.parameters.jobs >>

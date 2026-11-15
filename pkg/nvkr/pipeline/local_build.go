@@ -138,6 +138,19 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 	if n.Network != "" {
 		args = append(args, "--network="+n.Network)
 	}
+	if buildKit == nil {
+		buildScratch, err := os.MkdirTemp(filepath.Dir(outRoot), ".nvkr-build-*")
+		if err != nil {
+			return nil, e.Wrap(e.CodeBuildFailed, err, "creating build scratch directory for %s", n.Component)
+		}
+		defer func() { _ = removePrivateTree(buildScratch) }()
+		for _, sub := range []string{"home", "tmp", "go-build", "go-path", "go-mod"} {
+			if err := os.Mkdir(filepath.Join(buildScratch, sub), 0o700); err != nil {
+				return nil, e.Wrap(e.CodeBuildFailed, err, "creating build scratch %s for %s", sub, n.Component)
+			}
+		}
+		args = append(args, localBuildContainerArgs(opts.Runtime, buildScratch, n.Env)...)
+	}
 	// Only bound per-build CPU when builds actually run concurrently. `go build`
 	// already parallelizes across all cores, so with jobs>1 we share the host cores
 	// across the budget to avoid oversubscription; with jobs==1 the single build
@@ -247,6 +260,40 @@ func (l Local) build(n ir.Node, opts RunOptions) (result *ArtifactResult, return
 
 func buildMaterialMountArgs(root string) []string {
 	return []string{"-v", root + ":" + buildInputsContainerRoot + ":ro"}
+}
+
+const buildScratchContainerRoot = "/nvkr/build-tmp"
+
+func localBuildContainerArgs(runtimePath, buildScratch string, env []ir.EnvVar) []string {
+	args := []string{
+		"--user", localContainerIdentity(runtimePath),
+		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777",
+		"-v", buildScratch + ":" + buildScratchContainerRoot,
+	}
+	defaults := []struct {
+		key, value string
+	}{
+		{"HOME", buildScratchContainerRoot + "/home"},
+		{"TMPDIR", buildScratchContainerRoot + "/tmp"},
+		{"GOCACHE", buildScratchContainerRoot + "/go-build"},
+		{"GOPATH", buildScratchContainerRoot + "/go-path"},
+		{"GOMODCACHE", buildScratchContainerRoot + "/go-mod"},
+	}
+	for _, def := range defaults {
+		if !hasBuildEnvVar(env, def.key) {
+			args = append(args, "-e", def.key+"="+def.value)
+		}
+	}
+	return args
+}
+
+func hasBuildEnvVar(env []ir.EnvVar, key string) bool {
+	for _, ev := range env {
+		if ev.Name == key {
+			return true
+		}
+	}
+	return false
 }
 
 func packageArtifact(n ir.Node, binPath string, opts RunOptions, res *ArtifactResult) error {

@@ -193,8 +193,22 @@ func (l Local) completeFetch(n ir.Node, dir string, opts RunOptions, vendor *sou
 func (l Local) vendor(n ir.Node, dir string, opts RunOptions) error {
 	return ensureSourceClosure(n, dir, opts, func() error {
 		abs, _ := filepath.Abs(dir)
+		vendorScratch, err := os.MkdirTemp(filepath.Dir(abs), ".nvkr-vendor-*")
+		if err != nil {
+			return e.Wrap(e.CodeFetchFailed, err, "creating vendor scratch directory for %s", n.Dest)
+		}
+		defer func() { _ = removePrivateTree(vendorScratch) }()
+		for _, sub := range []string{"source", ".home", ".tmp", ".gocache", ".go", ".gomod"} {
+			mode := os.FileMode(0o700)
+			if sub == "source" {
+				mode = 0o755
+			}
+			if err := os.Mkdir(filepath.Join(vendorScratch, sub), mode); err != nil {
+				return e.Wrap(e.CodeFetchFailed, err, "creating vendor scratch %s for %s", sub, n.Dest)
+			}
+		}
 		cname := containerName(ir.Node{ID: "vendor-" + n.Dest})
-		args := append([]string{"run", "--rm", "--name", cname, "--network=" + ir.NetworkDefault, "-v", abs + ":/src", "-w", "/src", n.VendorImage}, n.VendorCmd...)
+		args := localVendorArgs(cname, n, opts.Runtime, vendorScratch, abs)
 		fmt.Fprintf(opts.Stdout, "\n=== vendor %s (network, %s) ===\n", n.Dest, n.VendorImage)
 		opts.progress.printf("[container] vendor %s — launching %s with network access\n", n.Dest, n.VendorImage)
 		if err := registerContainer(opts, cname); err != nil {
@@ -206,6 +220,32 @@ func (l Local) vendor(n ir.Node, dir string, opts RunOptions) error {
 		opts.reap.forget(cname)
 		return nil
 	})
+}
+
+func localContainerIdentity(runtimePath string) string {
+	if filepath.Base(runtimePath) == "podman" {
+		return "0:0"
+	}
+	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+}
+
+func localVendorArgs(cname string, n ir.Node, runtimePath, vendorScratch, absSource string) []string {
+	args := []string{
+		"run", "--rm", "--name", cname,
+		"--user", localContainerIdentity(runtimePath),
+		"--network=" + ir.NetworkDefault,
+		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777",
+		"-v", vendorScratch + ":/src",
+		"-v", absSource + ":/src/source",
+		"-w", "/src/source",
+		"-e", "HOME=/src/.home",
+		"-e", "TMPDIR=/src/.tmp",
+		"-e", "GOCACHE=/src/.gocache",
+		"-e", "GOPATH=/src/.go",
+		"-e", "GOMODCACHE=/src/.gomod",
+		n.VendorImage,
+	}
+	return append(args, n.VendorCmd...)
 }
 
 func (l Local) verifyTree(dir string, n ir.Node, opts RunOptions) error {

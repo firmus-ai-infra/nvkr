@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -157,5 +158,100 @@ func TestQualifiedPackagingFailsBeforeGraphOrPathIO(t *testing.T) {
 	}
 	if _, statErr := os.Stat(missingRoot); !os.IsNotExist(statErr) {
 		t.Fatalf("unsupported qualified packaging touched its source root: %v", statErr)
+	}
+}
+
+func TestLocalVendorArgsUseNonRootAndWorkspaceParent(t *testing.T) {
+	node := ir.Node{
+		VendorImage: "registry.example/vendor@sha256:" + repeatHex("a"),
+		VendorCmd:   []string{"bash", "-ec", "echo ok"},
+	}
+	dockerArgs := localVendorArgs("nvkr-vendor-test", node, "docker", "/work/.nvkr-vendor-1", "/work/source")
+	wantUser := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	for _, want := range []string{
+		"--user", wantUser,
+		"/work/.nvkr-vendor-1:/src",
+		"/work/source:/src/source",
+		"/src/source",
+		"HOME=/src/.home",
+		"TMPDIR=/src/.tmp",
+		"GOCACHE=/src/.gocache",
+		"GOPATH=/src/.go",
+		"GOMODCACHE=/src/.gomod",
+	} {
+		if !slices.Contains(dockerArgs, want) {
+			t.Fatalf("docker vendor args missing %q: %v", want, dockerArgs)
+		}
+	}
+	for _, arg := range dockerArgs {
+		if strings.Contains(arg, "/root") || arg == "/work/source:/src" {
+			t.Fatalf("docker vendor args used forbidden root path %q: %v", arg, dockerArgs)
+		}
+	}
+	podmanArgs := localVendorArgs("nvkr-vendor-test", node, "podman", "/work/.nvkr-vendor-1", "/work/source")
+	if !slices.Contains(podmanArgs, "0:0") {
+		t.Fatalf("podman vendor args missing rootless mapping 0:0: %v", podmanArgs)
+	}
+}
+
+func TestLocalBuildContainerArgsUseNonRootAndScratchDefaults(t *testing.T) {
+	args := localBuildContainerArgs("docker", "/work/.nvkr-build-1", []ir.EnvVar{
+		{Name: "HOME", Value: "/custom/home"},
+	})
+	wantUser := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	for _, want := range []string{
+		"--user", wantUser,
+		"/work/.nvkr-build-1:" + buildScratchContainerRoot,
+		"TMPDIR=" + buildScratchContainerRoot + "/tmp",
+		"GOCACHE=" + buildScratchContainerRoot + "/go-build",
+		"GOPATH=" + buildScratchContainerRoot + "/go-path",
+		"GOMODCACHE=" + buildScratchContainerRoot + "/go-mod",
+	} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("build args missing %q: %v", want, args)
+		}
+	}
+	if slices.Contains(args, "HOME="+buildScratchContainerRoot+"/home") {
+		t.Fatalf("build args overrode explicit HOME in node env: %v", args)
+	}
+}
+
+func TestLocalVendorMaterializesNonRootScratchAndCleansUp(t *testing.T) {
+	node, dir, opts := pristineClosureFixture(t)
+	node.VendorImage = "registry.example/vendor@sha256:" + repeatHex("b")
+	node.VendorCmd = []string{"vendor-step"}
+	record := filepath.Join(t.TempDir(), "runtime.args")
+	fakeRuntime := filepath.Join(t.TempDir(), "docker")
+	script := fmt.Sprintf("#!/usr/bin/env bash\nset -eu\nprintf '%%s\\n' \"$@\" > %q\nprintf 'vendored' > %q\n",
+		record, filepath.Join(dir, "vendored"))
+	if err := os.WriteFile(fakeRuntime, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts.Runtime = fakeRuntime
+	opts.Stdout = &bytes.Buffer{}
+	opts.reap = newReaper(t.Context(), fakeRuntime)
+	defer opts.reap.close()
+	if err := (Local{}).vendor(node, dir, opts); err != nil {
+		t.Fatalf("Local.vendor failed: %v", err)
+	}
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if !slices.Contains(args, fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())) {
+		t.Fatalf("vendor runtime did not pass non-root user: %v", args)
+	}
+	if !slices.Contains(args, "/src/source") {
+		t.Fatalf("vendor runtime did not set workdir /src/source: %v", args)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".nvkr-vendor-") {
+			t.Fatalf("vendor scratch directory was not cleaned up: %s", entry.Name())
+		}
 	}
 }
