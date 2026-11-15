@@ -6,8 +6,8 @@ apiVersion: nvkr.dev/catalog-fragment/v1
 kind: CatalogFragment
 sources:
   nvke-os:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -40,8 +40,8 @@ sources:
         echo 'agent module pins changed during vendoring' >&2; exit 1;
       }
   nvke-cni-calico-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -52,8 +52,8 @@ sources:
       make -C os-image/packages/cni-calico bundle nfpm \
         ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
   nvke-kubeadm-distro-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -71,8 +71,8 @@ sources:
         ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
       cp -a "$bundle_root/dist" os-image/packages/kubeadm-distro/dist
   nvke-spire-agent-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
@@ -83,8 +83,8 @@ sources:
       make -C os-image/packages/spire-agent bundle nfpm \
         ARCH={{.Arch}} BIN_DIR=/usr/local/bin NFPM_BIN=/usr/local/bin/nfpm
   nvke-doca-ovs-source:
-    repo: https://github.com/dsx-ai-factory/nvke.git
-    constraint: v0.23.0
+    repo: https://github.com/firmus-ai-infra/nvke.git
+    constraint: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
     toolchainImagesByArch:
       amd64: sha256:42c68ca155d26fcc101dc8e863855f287bd9314b0c0417d5520959c616211edd
       arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140

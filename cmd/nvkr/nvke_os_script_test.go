@@ -577,7 +577,11 @@ exec "$NVKR_AUTHORING_TEST_EXE" -test.run='^TestAuthoringLabCLIProcess$' -- "$@"
 					if strings.Contains(string(environment), "docker.io/") {
 						t.Fatal("frozen Environment still references docker.io")
 					}
-					registry, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt/catalog/registry.yaml"))
+					catalogSource := "inputs/catalogs/node-images/diagnostic"
+					if ubuntu == "24.04" {
+						catalogSource = "inputs/catalogs/node-images/release"
+					}
+					registry, err := os.ReadFile(filepath.Join(root, ".nvkr/inputs/test-attempt", catalogSource, "registry.yaml"))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -611,7 +615,7 @@ func TestOSBootstrapHarborRequiresLocalTrustCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, directory := range []string{"inputs/definitions/diagnostics", "inputs/environments", "inputs/catalogs/node-images"} {
+	for _, directory := range []string{"inputs/definitions/diagnostics", "inputs/environments", "inputs/catalogs/node-images", "inputs/catalogs/shared"} {
 		if err := os.CopyFS(filepath.Join(root, directory), os.DirFS(filepath.Join(repository, directory))); err != nil {
 			t.Fatal(err)
 		}

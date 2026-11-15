@@ -4,7 +4,7 @@
 apiVersion: nvkr.dev/catalog-overlay/v3
 kind: CatalogOverlay
 name: nvke-os-arm64-native-kvm
-requiresCatalogDigest: sha256:7d49e3496037e5d7d301eb9c96e9336dbdd2fab783e45f891b467eba4aa412b8
+requiresCatalogDigest: sha256:1831fe778351f0b63b40533826fbd3048f06ffd4e3ac21e1e02383deac4b2bb0
 components:
   nvke-node-image:
     component:
@@ -12,10 +12,10 @@ components:
       fromSource: true
       builderType: vm-image
       buildNetwork: default
-      repo: https://github.com/dsx-ai-factory/nvke.git
-      tag: v0.23.0
-      commit: 2cfd00081b468d85a4894ec17e9deac13c9d8169
-      treeHash: a377abf5f0d584db9c86cc9981b2fdaa8bb4ac53
+      repo: https://github.com/firmus-ai-infra/nvke.git
+      tag: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
+      commit: 0c8964b9741a5b1ca7566d8c9663c40c314d09f3
+      treeHash: 75938884a572e62f608529644aa9cdecc93d9192
       toolchainImages:
         arm64: ghcr.io/dsx-ai-factory/nvkr/m2-candidate/toolchains/packer-native@sha256:2dcb63fc894ec25f8763d37d5139d904be3f6f42c897ca0dd3b32a51f8d36140
       vendorCommand:
@@ -46,7 +46,7 @@ components:
           printf '%s\n' "$pins" | sha256sum --quiet -c - || {
             echo 'agent module pins changed during vendoring' >&2; exit 1;
           }
-      sourceDateEpoch: 1793236039
+      sourceDateEpoch: 1794522838
       outputType: disk-image
       disk:
         format: qcow2

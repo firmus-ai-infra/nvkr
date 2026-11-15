@@ -8,7 +8,7 @@
 set -euo pipefail
 
 nvke_repo="https://github.com/firmus-ai-infra/nvke.git"
-nvke_commit="2c8c9b8f80fcd94009ff79d50710931675a73e67"
+nvke_commit="0c8964b9741a5b1ca7566d8c9663c40c314d09f3"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 src="${repo_root}/.nvkr/nvke-efi-src"

@@ -1,15 +1,9 @@
 {
   "schemaVersion": "nvkr.dev/packer-toolchain/v1",
-<<<<<<< HEAD
   "ubuntuSnapshot": "20260920T000000Z",
   "baseImage": "ubuntu@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78",
   "downloadImage": "curlimages/curl@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40",
   "buildkitImage": "moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe",
-=======
-  "ubuntuSnapshot": "20261109T000000Z",
-  "baseImage": "ubuntu@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c",
-  "downloadImage": "curlimages/curl@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93",
->>>>>>> main
   "validatedNVKE": {
     "commit": "726f76944404e1106626b8333d3576bdf67b575b",
     "goVersion": "1.27.1",
